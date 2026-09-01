@@ -274,7 +274,9 @@ def main():
     overlay.show()
 
 
-    translator = Translator(target_language=overlay.target_lang)
+    gq_key = _cfg_key("GROQ_API_KEY", "groq_api_key")
+    translator = Translator(target_language=overlay.target_lang, groq_api_key=gq_key)
+
 
     bridge = Bridge()
     bridge.upsert.connect(overlay.upsert_entry)
