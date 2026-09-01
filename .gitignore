@@ -1,0 +1,41 @@
+# Configuración con claves privadas (¡NUNCA subir a GitHub!)
+config.json
+
+# Entornos virtuales de Python
+venv/
+env/
+.venv/
+ENV/
+
+# Archivos compilados de Python y caché
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Salidas de empaquetado (PyInstaller / Inno Setup)
+build/
+dist/
+*.spec
+Output/
+*.exe
+
+# Historial de transcripciones de sesión
+transcripciones/transcripcion_*.txt
+
+# Archivos comprimidos temporales
+*.zip
+*.rar
+*.7z
+*.tar.gz
+
+# Archivos de entorno y editores
+.env
+.vscode/
+.idea/
+*.suo
+*.user
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store
