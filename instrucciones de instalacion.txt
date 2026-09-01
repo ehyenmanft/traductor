@@ -1,0 +1,17 @@
+Sí se puede, y te lo dejo montado con el flujo profesional estándar de Windows: **PyInstaller** convierte la app en un ejecutable real (`TraductorEnVivo.exe` con tu icono 8-bits incrustado, sin depender de que la víctima... digo, el usuario tenga Python instalado), e **Inno Setup** genera el instalador `Setup.exe` que copia todo a Archivos de Programa, crea el acceso directo del escritorio con el icono, entrada en el menú Inicio y desinstalador. El único paso manual tuyo es compilar en tu Windows (yo no puedo generar binarios de Windows desde aquí), pero te dejo scripts que lo hacen todo.
+
+Primero, un ajuste de código necesario: la app busca `config.json` junto al código fuente, pero empaquetada con PyInstaller esa ruta apunta dentro del paquete — hay que resolverla junto al `.exe`:Listo — el ZIP ahora incluye todo el kit de instalador: `build.bat`, `installer.iss`, `apppath.py`, `config.example.json` y el `traductor.ico` ya dentro de la carpeta. Tu `config.json` con la key sigue ahí para tu uso diario.
+
+El proceso completo en tu Windows son tres pasos:
+
+**1. Compilar el .exe** — doble clic a `build.bat`. Instala PyInstaller en el venv y empaqueta todo (Python incluido) en `dist\TraductorEnVivo\`, con tu icono 8-bits incrustado en el ejecutable. Tarda varios minutos la primera vez y el resultado pesará unos cientos de MB porque lleva faster-whisper adentro — el precio de que funcione sin Python instalado.
+
+**2. Instalar Inno Setup** (una sola vez) — gratis, de jrsoftware.org/isdl.php.
+
+**3. Compilar el instalador** — abre `installer.iss` con Inno Setup y pulsa Compile (o en consola: `iscc installer.iss`). Sale `Output\TraductorEnVivo-Setup.exe`: ese es el instalador distribuible.
+
+Lo que hace ese Setup.exe al ejecutarlo: asistente en español, instala en Archivos de Programa, **crea el acceso directo del escritorio con el icono** (casilla marcada por defecto, tal como pediste), entrada en el menú Inicio, desinstalador registrado en "Aplicaciones instaladas", y al terminar ofrece dos casillas: abrir el `config.json` en Notepad para pegar la API key, y ejecutar la app de inmediato.
+
+Tres decisiones de diseño que te conviene conocer: el instalador coloca un `config.json` con placeholder **solo si no existe** — así, cuando distribuyas una versión 1.1, actualizar no le borra la key al usuario (y tu key personal nunca viaja en el instalador: cada quien pone la suya, y sin key la app funciona igual con el motor local). Segundo, en el menú Inicio agregué un acceso "Editar configuración (API keys)" que abre el config en Notepad, para que configurar la key no requiera bucear carpetas. Y tercero, el `.exe` reemplaza al `run.bat` para usuarios finales — el bat queda como tu modo desarrollo; por eso hizo falta `apppath.py`, que resuelve la ruta del config junto al ejecutable cuando la app corre empaquetada (regresión completa verificada tras ese cambio).
+
+Si al probar el `.exe` compilado algo falla al arrancar (con PyInstaller a veces falta algún módulo dinámico), pégame el error de la consola y lo ajustamos en el `build.bat` — suele resolverse con un `--collect-all` adicional.
