@@ -1,5 +1,5 @@
-# Configuración con claves privadas (¡NUNCA subir a GitHub!)
-config.json
+# Configuración con claves privadas en modo desarrollo (¡NUNCA subir a GitHub!)
+/config.json
 
 # Entornos virtuales de Python
 venv/
@@ -14,12 +14,10 @@ __pycache__/
 *.so
 .pytest_cache/
 
-# Salidas de empaquetado (PyInstaller / Inno Setup)
+# Salidas intermedias de compilación
 build/
-dist/
 *.spec
 Output/
-*.exe
 
 # Historial de transcripciones de sesión
 transcripciones/transcripcion_*.txt
