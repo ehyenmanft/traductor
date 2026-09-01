@@ -511,6 +511,10 @@ class TranslationOverlay(QWidget):
                     f'<span style="color:#7ea8f8;font-weight:600">[{e["lang"].upper()}]</span> {orig}{cursor}</div>')
                 cursor = ""
 
+            display_trans = trans
+            if self.compact and (trans == "…" or not trans):
+                display_trans = orig
+
             trans_color = "#ffe066" if is_sub else "#7dffb2"
             trans_weight = "bold" if is_sub else "600"
             margin = "margin-bottom:4px;" if is_sub else "margin-bottom:7px;"
@@ -518,7 +522,8 @@ class TranslationOverlay(QWidget):
 
             parts.append(
                 f'<div style="color:{trans_color};font-weight:{trans_weight};'
-                f'{glow_style}{font_bump}{margin}line-height:1.25;">&rarr; {trans}{cursor}</div>')
+                f'{glow_style}{font_bump}{margin}line-height:1.25;">&rarr; {display_trans}{cursor}</div>')
+
 
         sb = self.text.verticalScrollBar()
         at_bottom = sb.value() >= sb.maximum() - 4

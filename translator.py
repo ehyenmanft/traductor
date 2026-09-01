@@ -1,7 +1,7 @@
 """
 Motor de traducción en tiempo real con contexto gamer:
 - Prioridad 1: Groq API (llama-3.1-8b-instant) — Ultra-rápido (~120ms) y especializado en jerga de videojuegos.
-- Prioridad 2: Google Translate (deep-translator) — Fallback automático y gratuito.
+- Prioridad 2: Google Translate (deep-translator) con detección automática.
 - Incluye caché en memoria para llamadas tácticas y frases repetidas.
 """
 import os
@@ -46,7 +46,6 @@ class Translator:
         self.groq_key = (api_key or "").strip()
 
     def _translate_groq(self, text: str, src: str, target: str) -> str:
-        """Traduce usando LLaMA 3.1 8B Instant con contexto de videojuegos."""
         target_name = LANG_NAMES.get(target, target)
         src_name = LANG_NAMES.get(src, "any language") if src != "auto" else "any language"
 
@@ -72,24 +71,29 @@ class Translator:
             "max_tokens": 120,
         }
 
-        resp = requests.post(GROQ_CHAT_URL, headers=headers, json=payload, timeout=4.0)
+        resp = requests.post(GROQ_CHAT_URL, headers=headers, json=payload, timeout=3.5)
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"].strip()
-
-        # Limpiar comillas iniciales/finales si el modelo las agregó
         content = re.sub(r'^["\'«]+|["\'»]+$', '', content).strip()
         return content
 
     def _translate_google(self, text: str, src: str, target: str) -> str:
-        """Fallback tradicional usando Google Translate."""
         try:
-            return GoogleTranslator(source=src, target=target).translate(text)
+            res = GoogleTranslator(source="auto", target=target).translate(text)
+            if res and not any(err in res.lower() for err in ["error 500", "server error", "<html"]):
+                return res
         except Exception:
-            try:
-                return GoogleTranslator(source="auto", target=target).translate(text)
-            except Exception:
-                return text
+            pass
+
+        try:
+            res = GoogleTranslator(source=src, target=target).translate(text)
+            if res and not any(err in res.lower() for err in ["error 500", "server error", "<html"]):
+                return res
+        except Exception:
+            pass
+
+        return text
 
     def translate(self, text: str, source_language: str) -> str:
         text = text.strip()
@@ -107,13 +111,12 @@ class Translator:
 
         result = ""
         # 1. Intentar con Groq Gamer si hay clave disponible
-        if self.groq_key and self._groq_failures < 5:
+        if self.groq_key and self._groq_failures < 4:
             try:
                 result = self._translate_groq(text, src, target)
                 self._groq_failures = 0
             except Exception as e:
                 self._groq_failures += 1
-                # En caso de error puntual en Groq, cae a Google silenciosamente
                 result = ""
 
         # 2. Fallback a Google Translate si no hay resultado
