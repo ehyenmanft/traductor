@@ -13,6 +13,8 @@ from collections import deque
 from datetime import datetime
 
 from apppath import app_dir
+import overlay_style
+from subtitle_view import SubtitleView
 
 from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut, QAction, QIcon
@@ -56,6 +58,10 @@ class TranslationOverlay(QWidget):
         self.compact = cfg.get("compact", False)
         self.mode = cfg.get("mode", "history")  # "history" o "subtitle"
         self.target_lang = cfg.get("target_lang", target_lang)
+        # estilo (fuente, colores, contorno…); sin config previo, el del modo actual
+        self.ostyle = overlay_style.from_dict(
+            cfg.get("style"), default_preset="gamer" if self.mode == "subtitle" else "classic")
+        self._style_dialog = None
 
         self.panel_width = width if width is not None else cfg.get("width", 560)
         if self.panel_width not in WIDTH_PRESETS:
@@ -116,6 +122,9 @@ class TranslationOverlay(QWidget):
             "border:1px solid rgba(0,180,255,50);border-radius:4px;font-size:11px;font-weight:bold;padding:1px 6px;}"
             "QPushButton:hover{background:rgba(0,180,255,65);color:#ffffff;}")
 
+        self.btn_style = _btn("🎨", "Personalizar estilo (fuente, colores, contorno, posición…)",
+                              self.open_style_dialog)
+
         # Botón modo Gaming HUD Subtitle
         self.btn_gaming = _btn("🎮" if self.mode == "subtitle" else "💬",
                                "Alternar modo Gaming Subtítulo HUD (F6)",
@@ -146,7 +155,7 @@ class TranslationOverlay(QWidget):
         self.text = QTextEdit()
         self.text.setReadOnly(True)
         self.text.setFrameStyle(0)
-        self.text.setFixedHeight(TEXT_AREA_HEIGHT if self.mode == "history" else 105)
+        self.text.setFixedHeight(TEXT_AREA_HEIGHT)
         self.text.viewport().setAutoFillBackground(False)
         self.text.setStyleSheet(
             "QTextEdit{background:transparent;border:none;}"
@@ -159,6 +168,11 @@ class TranslationOverlay(QWidget):
         self.text.installEventFilter(self)
         self.text.viewport().installEventFilter(self)
         self.layout.addWidget(self.text)
+
+        # Modo HUD: visor propio con contorno/sombra reales y alto automático
+        self.sub = SubtitleView()
+        self.layout.addWidget(self.sub)
+        self._apply_style_effects()
 
         # Atajos locales
         self._shortcuts = [
@@ -206,6 +220,7 @@ class TranslationOverlay(QWidget):
                 "target_lang": self.target_lang,
                 "width": self.panel_width,
                 "pos": [self.x(), self.y()],
+                "style": overlay_style.to_dict(self.ostyle),
             })
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(cfg, f)
@@ -305,10 +320,8 @@ class TranslationOverlay(QWidget):
     def toggle_gaming_mode(self):
         self.mode = "subtitle" if self.mode == "history" else "history"
         if self.mode == "subtitle":
-            self.text.setFixedHeight(105)
             self._flash("🎮 Modo Gaming Subtítulos HUD")
         else:
-            self.text.setFixedHeight(TEXT_AREA_HEIGHT)
             self._flash("💬 Modo Historial Completo")
         self._style_gaming_btn()
         self.update()
@@ -456,6 +469,60 @@ class TranslationOverlay(QWidget):
             self._save_config()
         self._drag_pos = None
 
+    # ---------- Estilo personalizable ----------
+
+    def _apply_style_effects(self):
+        """Halo de contraste para el visor de historial (el HUD dibuja su propio contorno)."""
+        st = self.ostyle
+        if st.outline > 0 or st.shadow:
+            fx = QGraphicsDropShadowEffect(self.text)
+            fx.setBlurRadius(max(2, st.outline * 2 + (3 if st.shadow else 0)))
+            fx.setOffset(0, 1 if st.shadow else 0)
+            c = QColor(st.outline_color if st.outline > 0 else "#000000")
+            c.setAlpha(235)
+            fx.setColor(c)
+            self.text.setGraphicsEffect(fx)
+        else:
+            self.text.setGraphicsEffect(None)
+
+    def style_changed(self, save: bool = True):
+        self._apply_style_effects()
+        self._apply_fonts()
+        self._render()
+        if save:
+            self._save_config()
+
+    def set_style_field(self, key: str, value):
+        self.ostyle = overlay_style.set_field(self.ostyle, key, value)
+        self.style_changed()
+
+    def apply_style_preset(self, name: str):
+        self.ostyle = overlay_style.apply_preset(name)
+        self.style_changed()
+
+    def anchor_to(self, name: str):
+        """Mueve el panel a una zona de la pantalla (abajo-centro, arriba-izq., …)."""
+        scr = QApplication.primaryScreen().availableGeometry()
+        w, h = self.width(), self.height()
+        m = 30
+        xs = {"left": scr.left() + m, "center": scr.left() + (scr.width() - w) // 2,
+              "right": scr.right() - w - m}
+        ys = {"top": scr.top() + m, "middle": scr.top() + (scr.height() - h) // 2,
+              "bottom": scr.bottom() - h - m - 40}
+        v, _, hz = name.partition("-")
+        if v in ys and hz in xs:
+            self.move(xs[hz], ys[v])
+            self._save_config()
+
+    def open_style_dialog(self):
+        from style_dialog import StyleDialog
+        if self._style_dialog is None:
+            self._style_dialog = StyleDialog(self)
+        self._style_dialog.sync_from_style()
+        self._style_dialog.show()
+        self._style_dialog.raise_()
+        self._style_dialog.activateWindow()
+
     # ---------- API pública (señales) ----------
 
     def upsert_entry(self, uid: int, original: str, lang: str, final: bool):
@@ -499,56 +566,53 @@ class TranslationOverlay(QWidget):
         self._refresh_pending = False
         if self.collapsed:
             self.text.hide()
+            self.sub.hide()
             self.adjustSize()
             return
+        if self.mode == "subtitle":
+            self.text.hide()
+            self.sub.show()
+            self.sub.set_data(list(self.entries), self.ostyle, self.font_size, self.compact)
+            self.adjustSize()
+            return
+        self.sub.hide()
         self.text.show()
 
         entries_to_show = list(self.entries)
-        if self.mode == "subtitle":
-            # En modo gaming subtitle solo mostramos las últimas 1 o 2 frases
-            entries_to_show = entries_to_show[-2:] if len(entries_to_show) >= 2 else entries_to_show
-
+        st = self.ostyle
         parts = []
-        is_sub = (self.mode == "subtitle")
+        is_sub = False
 
         for e in entries_to_show:
             cursor = "" if e["final"] else " ▌"
             orig = html_mod.escape(self._clip(e["orig"]))
             trans = html_mod.escape(self._clip(e["trans"]))
 
-            # Sombra y contorno de alto contraste para visibilidad sobre videojuegos
-            glow_style = (
-                "text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, "
-                "1px -1px 0 #000, -1px 1px 0 #000, 0 2px 5px rgba(0,0,0,0.95);"
-            )
+            glow_style = ""       # el contraste lo da el halo (_apply_style_effects)
 
             if not self.compact:
-                orig_color = "#e2e8f0" if is_sub else "#c8d0dc"
-                orig_size = f"font-size:{self.font_size - 1}pt;" if is_sub else ""
+                tag = (f'<span style="color:{st.tag_color};font-weight:600">'
+                       f'[{e["lang"].upper()}]</span> ') if st.show_tag else ""
                 parts.append(
-                    f'<div style="color:{orig_color};{glow_style}{orig_size}line-height:1.2;">'
-                    f'<span style="color:#7ea8f8;font-weight:600">[{e["lang"].upper()}]</span> {orig}{cursor}</div>')
+                    f'<div style="color:{st.orig_color};line-height:1.2;">{tag}{orig}{cursor}</div>')
                 cursor = ""
 
             display_trans = trans
             if self.compact and (trans == "…" or not trans):
                 display_trans = orig
 
-            trans_color = "#ffe066" if is_sub else "#7dffb2"
-            trans_weight = "bold" if is_sub else "600"
-            margin = "margin-bottom:4px;" if is_sub else "margin-bottom:7px;"
-            font_bump = f"font-size:{self.font_size + 1}pt;" if is_sub else ""
-
+            weight = "bold" if st.bold else "normal"
+            italic = "italic" if st.italic else "normal"
             parts.append(
-                f'<div style="color:{trans_color};font-weight:{trans_weight};'
-                f'{glow_style}{font_bump}{margin}line-height:1.25;">&rarr; {display_trans}{cursor}</div>')
+                f'<div style="color:{st.trans_color};font-weight:{weight};font-style:{italic};'
+                f'margin-bottom:7px;line-height:1.25;">&rarr; {display_trans}{cursor}</div>')
 
 
         sb = self.text.verticalScrollBar()
         at_bottom = sb.value() >= sb.maximum() - 4
         old = sb.value()
         self.text.setHtml(
-            f'<body style="font-family:\'Segoe UI\', sans-serif;'
+            f'<body style="font-family:\'{st.font}\', sans-serif;'
             f'font-size:{self.font_size}pt">' + "".join(parts) + "</body>")
         sb.setValue(sb.maximum() if at_bottom else min(old, sb.maximum()))
         self.adjustSize()

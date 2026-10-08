@@ -144,6 +144,10 @@ def setup_system_tray(app: QApplication, overlay: TranslationOverlay, translator
     act_compact.triggered.connect(overlay.toggle_compact)
     menu.addAction(act_compact)
 
+    act_style = QAction("🎨 Personalizar estilo…", menu)
+    act_style.triggered.connect(overlay.open_style_dialog)
+    menu.addAction(act_style)
+
     menu.addSeparator()
 
     # Submenú de selección de idioma
