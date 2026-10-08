@@ -1,4 +1,11 @@
 import asyncio, os, subprocess, sys, tempfile, time, unittest
+
+# Este archivo prueba el bot de Telegram: se omite en entornos que no lo tienen (p. ej. el PC de la app de escritorio)
+for _mod in ("telegram",):
+    try:
+        __import__(_mod)
+    except ImportError:
+        raise unittest.SkipTest("sin %s (bot de Telegram)" % _mod)
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 os.environ.update(TELEGRAM_BOT_TOKEN="123:abc", DEEPGRAM_API_KEY="x")
