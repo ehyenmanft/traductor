@@ -51,7 +51,20 @@ def norm_lang(code: str) -> str:
     return code.split("-")[0] if code != "auto" else code
 
 
+def _fix_mojibake(text: str) -> str:
+    """'cÃ³mo' → 'cómo': UTF-8 leído como latin-1/cp1252 en algún punto del camino."""
+    if "Ã" not in text and "Â" not in text:
+        return text
+    for enc in ("cp1252", "latin-1"):
+        try:
+            return text.encode(enc).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+    return text
+
+
 def _clean(text: str) -> str:
+    text = _fix_mojibake(text or "")
     text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip()
     return re.sub(r'^["\'«“]+|["\'»”]+$', "", text).strip()
 
@@ -195,7 +208,9 @@ class LiveTranslator:
         if not on_delta:
             return _clean(r.json()["choices"][0]["message"]["content"])
         out = ""
-        for line in r.iter_lines(decode_unicode=True):
+        r.encoding = "utf-8"          # el flujo SSE no declara codificación: requests supondría latin-1 (acentos rotos)
+        for raw in r.iter_lines():
+            line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
             if not line or not line.startswith("data:"):
                 continue
             data = line[5:].strip()

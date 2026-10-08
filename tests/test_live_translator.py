@@ -198,6 +198,21 @@ class Translator(unittest.TestCase):
         self.assertEqual(t.partial_model, "openai/gpt-oss-20b")              # los parciales usan el pequeño
         self.assertEqual(t.final_models[0], "openai/gpt-oss-120b")
 
+    def test_accents_survive_streaming_and_mojibake_is_repaired(self):
+        sse = [b"data: " + json.dumps({"choices": [{"delta": {"content": c}}]}, ensure_ascii=False).encode("utf-8")
+               for c in ("¿Cómo está", " el artículo?")] + [b"data: [DONE]"]
+        class R:                                    # como requests con un flujo SSE sin charset: bytes crudos
+            status_code, text, headers, encoding = 200, "", {}, "ISO-8859-1"
+            def raise_for_status(self): pass
+            def iter_lines(self, decode_unicode=False):
+                assert not decode_unicode
+                return iter(sse)
+        t = make()
+        with mock.patch.object(lt.requests, "post", lambda *a, **k: R()):
+            self.assertEqual(t._groq("m", [], 50, 5.0, on_delta=lambda x: None), "¿Cómo está el artículo?")
+        self.assertEqual(lt._clean("cÃ³mo y artÃ\xadculo, mayorÃ\xada, TÃ©rminos"), "cómo y artículo, mayoría, Términos")
+        self.assertEqual(lt._clean("Ya está bien: año, niño, Ñandú"), "Ya está bien: año, niño, Ñandú")   # texto sano intacto
+
     def test_no_problem_reported_when_something_works(self):
         probs = []
         t = lt.LiveTranslator(target="es", groq_key=""); t.on_problem = probs.append
