@@ -123,3 +123,27 @@ voice-overlay/
 ## 📄 Licencia
 
 Este proyecto está bajo la Licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más detalles.
+
+---
+
+## 🤖 Bot de Telegram: traducir videos con subtítulos incrustados
+
+`telegram_bot.py` reutiliza el motor del traductor (Deepgram nova-3 para transcribir y detectar idioma, Groq/Google para traducir) y devuelve **tu video original, intacto, con la traducción superpuesta** (el audio se copia sin recodificar).
+
+**Flujo:** envías un video → el bot muestra un menú (estilo, posición, tamaño, idioma destino, texto original debajo) → pulsas **✅ Confirmar** → recibes el video traducido y un `.srt`.
+
+```bash
+sudo apt install ffmpeg            # o: winget install ffmpeg  (debe estar en el PATH)
+pip install -r requirements-bot.txt
+export TELEGRAM_BOT_TOKEN=...      # de @BotFather
+export DEEPGRAM_API_KEY=...
+export GROQ_API_KEY=...            # opcional, mejora la traducción
+export ALLOWED_USERS=123456789     # tu id (el bot lo muestra con /start); evita que otros gasten tu API
+python telegram_bot.py
+```
+
+Las claves también pueden ir en `config.json` (ver `config.example.json`).
+
+**Límites:** la Bot API pública solo deja a los bots descargar videos de hasta **20 MB** y enviar hasta **50 MB** (el bot comprime el resultado para entrar). Para videos grandes, ejecuta un [servidor local de Bot API](https://github.com/tdlib/telegram-bot-api) y define `TELEGRAM_API_URL=http://localhost:8081`.
+
+Pruebas: `python -m unittest discover tests`
