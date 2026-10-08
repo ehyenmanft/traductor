@@ -212,6 +212,16 @@ class TranslationOverlay(QWidget):
         except Exception:
             pass
 
+    def save_setting(self, key: str, value):
+        """Guarda un ajuste suelto (tono, etc.) sin tocar el resto de config.json."""
+        try:
+            cfg = self._load_config()
+            cfg[key] = value
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(cfg, f)
+        except Exception:
+            pass
+
     def closeEvent(self, e):
         self._save_config()
         super().closeEvent(e)

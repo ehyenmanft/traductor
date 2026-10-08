@@ -24,7 +24,8 @@ from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from audio_capture import SystemAudioCapture
 from overlay import AVAILABLE_LANGUAGES, TranslationOverlay
 from transcriber import StreamingTranscriber
-from translator import Translator
+from live_translator import (TONES, LiveTranslationWorker, LiveTranslator,
+                             norm_lang)
 
 
 def _cfg_value(cfg_field: str, default=None):
@@ -61,10 +62,11 @@ def build_transcriber(args, audio_queue):
     if engine == "deepgram":
         try:
             from transcriber_deepgram import DeepgramTranscriber
+            terms = list(_cfg_value("keyterms", []) or []) + list((_cfg_value("glossary", {}) or {}))
             return DeepgramTranscriber(
                 audio_queue, api_key=dg_key, language=args.lang,
                 endpointing_ms=int(_cfg_value("endpointing_ms", 300)),
-                keyterms=_cfg_value("keyterms", []))
+                keyterms=list(dict.fromkeys(terms)))
         except Exception as e:
             print(f"[engine] Deepgram no disponible ({e}); probando siguiente.")
             engine = "groq" if gq_key else "local"
@@ -102,7 +104,7 @@ def setup_global_hotkeys(bridge: Bridge) -> bool:
         return False
 
 
-def setup_system_tray(app: QApplication, overlay: TranslationOverlay, translator: Translator) -> QSystemTrayIcon:
+def setup_system_tray(app: QApplication, overlay: TranslationOverlay, translator: LiveTranslator) -> QSystemTrayIcon:
     """Crea el icono en la bandeja del sistema (System Tray) con menú rápido."""
     tray = QSystemTrayIcon(app)
     icon_path = os.path.join(app_dir(), "traductor.ico")
@@ -169,6 +171,35 @@ def setup_system_tray(app: QApplication, overlay: TranslationOverlay, translator
 
     menu.addSeparator()
 
+    # Tono de la traducción (se guarda en config.json)
+    tone_menu = menu.addMenu("🗣 Tono de traducción")
+    tone_menu.setStyleSheet(menu.styleSheet())
+    tone_group = QActionGroup(tone_menu)
+    tone_group.setExclusive(True)
+    for key, (label, _) in TONES.items():
+        act_tone = QAction(label, tone_menu, checkable=True)
+        act_tone.setChecked(key == translator.tone)
+
+        def _on_tone(checked, k=key):
+            translator.set_tone(k)
+            overlay.save_setting("tone", k)
+            overlay._flash(f"🗣 Tono: {TONES[k][0]}")
+
+        act_tone.triggered.connect(_on_tone)
+        tone_group.addAction(act_tone)
+        tone_menu.addAction(act_tone)
+
+    act_gloss = QAction("📖 Recargar glosario (config.json)", menu)
+
+    def _reload_glossary():
+        translator.set_glossary(_cfg_value("glossary", {}) or {})
+        overlay._flash("📖 Glosario recargado")
+
+    act_gloss.triggered.connect(_reload_glossary)
+    menu.addAction(act_gloss)
+
+    menu.addSeparator()
+
     def _open_folder():
         folder = os.path.join(app_dir(), "transcripciones")
         os.makedirs(folder, exist_ok=True)
@@ -209,54 +240,18 @@ def setup_system_tray(app: QApplication, overlay: TranslationOverlay, translator
     return tray
 
 
-class TranslationWorker:
-    """
-    Traduce en segundo plano, siempre lo MÁS RECIENTE: si llegan tres
-    parciales mientras traduce uno, los intermedios se descartan.
-    Así la traducción nunca acumula cola ni retraso.
-    """
-
-    def __init__(self, translator: Translator, bridge: Bridge,
-                 stop: threading.Event, min_interval: float = 0.35):
-        self.translator = translator
-        self.bridge = bridge
-        self.stop = stop
-        self.min_interval = min_interval
-        self._cond = threading.Condition()
-        self._pending: tuple[int, str, str] | None = None
-        threading.Thread(target=self._loop, daemon=True).start()
-
-    def submit(self, uid: int, text: str, lang: str):
-        with self._cond:
-            self._pending = (uid, text, lang)
-            self._cond.notify()
-
-    def _loop(self):
-        while not self.stop.is_set():
-            with self._cond:
-                if self._pending is None:
-                    self._cond.wait(timeout=0.5)
-                item, self._pending = self._pending, None
-            if item is None:
-                continue
-            uid, text, lang = item
-            translated = self.translator.translate(text, lang)
-            self.bridge.set_trans.emit(uid, translated)
-            time.sleep(self.min_interval)  # respeto de rate-limit
-
-
-def pipeline(transcriber: StreamingTranscriber, translator: Translator,
-             worker: TranslationWorker, bridge: Bridge, stop: threading.Event):
+def pipeline(transcriber: StreamingTranscriber, translator: LiveTranslator,
+             worker: LiveTranslationWorker, bridge: Bridge, stop: threading.Event):
     while not stop.is_set():
         try:
             seg = transcriber.text_queue.get(timeout=0.5)
         except queue.Empty:
             continue
         bridge.upsert.emit(seg.utterance_id, seg.text, seg.language, seg.is_final)
-        if seg.language == translator.target:
+        if norm_lang(seg.language) == translator.target:
             bridge.set_trans.emit(seg.utterance_id, seg.text)
         else:
-            worker.submit(seg.utterance_id, seg.text, seg.language)
+            worker.submit(seg.utterance_id, seg.text, seg.language, seg.is_final)
 
 
 def main():
@@ -287,7 +282,11 @@ def main():
 
 
     gq_key = _cfg_key("GROQ_API_KEY", "groq_api_key")
-    translator = Translator(target_language=overlay.target_lang, groq_api_key=gq_key)
+    translator = LiveTranslator(
+        target=overlay.target_lang, groq_key=gq_key,
+        tone=str(_cfg_value("tone", "gamer")),
+        glossary=_cfg_value("glossary", {}) or {},
+        context_size=int(_cfg_value("context_lines", 4)))
 
 
     bridge = Bridge()
@@ -308,7 +307,9 @@ def main():
     transcriber = build_transcriber(args, capture.audio_queue)
 
     stop = threading.Event()
-    worker = TranslationWorker(translator, bridge, stop)
+    worker = LiveTranslationWorker(
+        translator, bridge.set_trans.emit, stop,
+        translate_partials=bool(_cfg_value("translate_partials", True)))
     capture.start()
     transcriber.start()
     threading.Thread(

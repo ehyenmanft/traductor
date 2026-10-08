@@ -123,3 +123,22 @@ voice-overlay/
 ## 📄 Licencia
 
 Este proyecto está bajo la Licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más detalles.
+
+
+---
+
+## 🆕 Mejoras de traducción y audio en vivo
+
+**Traducción con contexto (requiere `groq_api_key`)** — `live_translator.py`
+- Las frases finales se traducen con **streaming** (aparecen palabra a palabra) y con las últimas `context_lines` frases como contexto, para mantener nombres y tono. Cadena de respaldo: `llama-3.3-70b-versatile` → `llama-3.1-8b-instant` → Google Translate. Si Groq falla 4 veces seguidas, usa Google durante 30 s.
+- **Tono** (menú de la bandeja → 🗣 Tono de traducción, o `"tone"` en `config.json`): `gamer` (por defecto), `natural`, `formal`, `casual`, `technical`, `funny`.
+- **Glosario** (`"glossary": {"origen": "destino"}`; si origen y destino son iguales, el término no se traduce). Menú de la bandeja → 📖 Recargar glosario. Los términos del glosario también se envían a Deepgram como `keyterms` para reconocerlos mejor.
+- Los parciales solo se traducen cuando el texto se estabiliza (`"translate_partials": false` para desactivarlo). La traducción final corrige a la del parcial en su sitio.
+- Corregido: una frase final podía perder su traducción si llegaba un parcial de la siguiente antes de traducirla.
+
+**Audio y reconocimiento**
+- Remuestreo a 16 kHz con filtro (antes se plegaban frecuencias altas sobre la voz) y fragmentos de 100 ms.
+- Cierre de frase por **segundos** de silencio (0,5 s) en los motores local y Groq.
+- Deepgram: `UtteranceEnd` (no deja frases abiertas con ruido de fondo), `KeepAlive` (no reconecta tras silencios; el loopback de Windows no emite audio en silencio), `"endpointing_ms"` y `"keyterms"` configurables.
+
+Pruebas: `python -m unittest discover tests` (no requieren Windows ni claves).

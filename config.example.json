@@ -6,5 +6,14 @@
   "compact": false,
   "mode": "subtitle",
   "target_lang": "es",
-  "width": 560
+  "width": 560,
+  "tone": "gamer",
+  "context_lines": 4,
+  "translate_partials": true,
+  "glossary": {
+    "gg": "gg",
+    "Black Mesa": "Black Mesa"
+  },
+  "keyterms": [],
+  "endpointing_ms": 300
 }
