@@ -14,8 +14,12 @@ cd "$APP_DIR"
 [ -f config.json ] || { echo "Falta config.json (corre primero deploy/install.sh)"; exit 1; }
 TOKEN="$(python3 -c "import json;print(json.load(open('config.json'))['telegram_bot_token'])")"
 
-read -rp  "api_id: " API_ID
-read -rsp "api_hash: " API_HASH; echo
+# Se pueden pasar por variables:  API_ID=123 API_HASH=abc YES=1 bash deploy/local_api.sh
+API_ID="${API_ID:-}"; API_HASH="${API_HASH:-}"
+[ -n "$API_ID" ]   || read -rp "api_id: " API_ID
+[ -n "$API_HASH" ] || read -rp "api_hash: " API_HASH
+API_HASH="$(echo "$API_HASH" | tr -d '[:space:]')"; API_ID="$(echo "$API_ID" | tr -d '[:space:]')"
+[ -n "$API_ID" ] && [ -n "$API_HASH" ] || { echo "Faltan api_id/api_hash" >&2; exit 1; }
 DATA=/var/lib/telegram-bot-api
 
 echo "==> Instalando Docker..."
@@ -27,7 +31,8 @@ sudo chown "$(id -u):$(id -g)" "$DATA"
 
 echo "==> Deteniendo el bot y cerrando su sesión en la nube de Telegram..."
 echo "    (Telegram exige hacerlo una vez; para volver a la nube hay que esperar ~10 min)"
-read -rp "¿Continuar? [s/N] " OK
+OK="${YES:+s}"
+[ -n "$OK" ] || read -rp "¿Continuar? [s/N] " OK
 [ "${OK,,}" = "s" ] || { echo "Cancelado."; exit 0; }
 sudo systemctl stop traductor-bot || true
 curl -fsS "https://api.telegram.org/bot${TOKEN}/logOut" ; echo
