@@ -17,11 +17,8 @@ import numpy as np
 from transcriber import TranscriptSegment, clean_text
 
 RATE = 16000
-DG_URL = (
-    "wss://api.deepgram.com/v1/listen"
-    "?model=nova-3&encoding=linear16&sample_rate=16000&channels=1"
-    "&interim_results=true&smart_format=true&endpointing=300"
-)
+DG_BASE = "wss://api.deepgram.com/v1/listen"
+KEEPALIVE_EVERY = 4.0   # Deepgram cierra el socket tras ~10 s sin audio
 
 
 class DeepgramTranscriber:
@@ -32,12 +29,18 @@ class DeepgramTranscriber:
         audio_queue: "queue.Queue[np.ndarray]",
         api_key: str,
         language: str | None = None,   # None = multilingüe con code-switching
+        endpointing_ms: int = 300,     # silencio que cierra una frase (menor = más rápido)
+        utterance_end_ms: int = 1000,  # respaldo si el ruido de fondo impide el endpointing
+        keyterms: list[str] | None = None,   # vocabulario a reforzar (nombres, jerga)
     ):
         if not api_key:
             raise ValueError("Falta DEEPGRAM_API_KEY")
         self.audio_queue = audio_queue
         self.api_key = api_key
         self.language = language or "multi"
+        self.endpointing_ms = int(endpointing_ms)
+        self.utterance_end_ms = max(1000, int(utterance_end_ms))   # mínimo de Deepgram
+        self.keyterms = [k.strip() for k in (keyterms or []) if k and k.strip()][:50]
         self.text_queue: "queue.Queue[TranscriptSegment]" = queue.Queue()
         self._stop = threading.Event()
 
@@ -56,7 +59,21 @@ class DeepgramTranscriber:
             return "auto"
         return max(set(self._utt_langs), key=self._utt_langs.count)
 
+    def _flush_final(self):
+        """Cierra la frase en curso con lo ya confirmado por Deepgram."""
+        final_text = clean_text(" ".join(self._final_parts).strip())
+        if final_text:
+            self.text_queue.put(TranscriptSegment(
+                self._uid, final_text, self._majority_lang(), 1.0, is_final=True))
+            self._uid += 1
+        self._final_parts, self._utt_langs = [], []
+        self._last_partial = ""
+
     def handle_message(self, msg: dict):
+        if msg.get("type") == "UtteranceEnd":
+            # silencio largo sin speech_final (música/ruido): no dejar la frase abierta
+            self._flush_final()
+            return
         if msg.get("type") != "Results":
             return
         try:
@@ -73,14 +90,7 @@ class DeepgramTranscriber:
                 self._utt_langs.extend(langs)
             current = " ".join(self._final_parts).strip()
             if msg.get("speech_final"):
-                final_text = clean_text(current)
-                if final_text:
-                    self.text_queue.put(TranscriptSegment(
-                        self._uid, final_text, self._majority_lang(),
-                        1.0, is_final=True))
-                    self._uid += 1
-                self._final_parts, self._utt_langs = [], []
-                self._last_partial = ""
+                self._flush_final()
                 return
         else:
             current = " ".join(
@@ -99,7 +109,14 @@ class DeepgramTranscriber:
     # ---------- red ----------
 
     def _url(self) -> str:
-        return DG_URL + f"&language={self.language}"
+        from urllib.parse import urlencode
+        q = [("model", "nova-3"), ("encoding", "linear16"), ("sample_rate", RATE),
+             ("channels", 1), ("interim_results", "true"), ("smart_format", "true"),
+             ("endpointing", self.endpointing_ms),
+             ("utterance_end_ms", self.utterance_end_ms),
+             ("language", self.language)]
+        q += [("keyterm", k) for k in self.keyterms]
+        return DG_BASE + "?" + urlencode(q)
 
     def _run(self):
         import websocket  # websocket-client
@@ -136,14 +153,21 @@ class DeepgramTranscriber:
                 rt = threading.Thread(target=receiver, daemon=True)
                 rt.start()
 
+                last_send = time.monotonic()
                 while not self._stop.is_set() and not recv_error.is_set():
                     try:
                         chunk = self.audio_queue.get(timeout=0.5)
                     except queue.Empty:
+                        # sin audio (el loopback de Windows no emite nada en silencio):
+                        # KeepAlive para no perder la conexión ni reconectar al hablar
+                        if time.monotonic() - last_send >= KEEPALIVE_EVERY:
+                            ws.send(json.dumps({"type": "KeepAlive"}))
+                            last_send = time.monotonic()
                         continue
                     pcm = (np.clip(chunk, -1.0, 1.0) * 32767).astype(
                         np.int16).tobytes()
                     ws.send_binary(pcm)
+                    last_send = time.monotonic()
 
                 try:
                     ws.send(json.dumps({"type": "CloseStream"}))
@@ -154,6 +178,11 @@ class DeepgramTranscriber:
             except Exception as e:
                 if self._stop.is_set():
                     return
+                if getattr(e, "status_code", None) == 400 and self.keyterms:
+                    print("[deepgram] El servidor rechazó 'keyterm'; "
+                          "continúo sin vocabulario personalizado.")
+                    self.keyterms = []
+                    continue
                 print(f"[deepgram] Conexión caída ({type(e).__name__}). "
                       f"Reintentando en {backoff:.0f} s...")
                 time.sleep(backoff)

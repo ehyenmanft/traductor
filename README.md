@@ -7,6 +7,8 @@
 
 Traductor de voz en tiempo real con **overlay translúcido estilo HUD / Cine** optimizado para **videojuegos y aplicaciones de PC** en Windows. Captura la salida de audio de tu juego o Discord (WASAPI loopback), transcribe en vivo con **Deepgram nova-3**, **Groq** o **faster-whisper local**, traduce al instante y muestra los subtítulos en pantalla sin interferir con tu partida.
 
+📘 **Novedades de la app de escritorio** (traducción con contexto, overlay personalizable, doblaje de voz): ver [docs/MEJORAS_EN_VIVO.md](docs/MEJORAS_EN_VIVO.md).
+
 ---
 
 ## ✨ Características Principales

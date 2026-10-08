@@ -14,14 +14,56 @@ import pyaudiowpatch as pyaudio
 TARGET_RATE = 16000  # Whisper/Deepgram trabajan a 16 kHz
 
 
+class Resampler:
+    """Remuestreo a 16 kHz con filtro pasa-bajos (FIR de ventana + interpolación).
+
+    El np.interp directo sobre 48 kHz deja pasar el contenido por encima de
+    8 kHz, que se pliega (aliasing) sobre la voz y empeora el reconocimiento.
+    Aquí se filtra primero; el estado se conserva entre fragmentos para que no
+    haya saltos en los bordes.
+    """
+
+    TAPS = 63
+
+    def __init__(self, src_rate: int, dst_rate: int = TARGET_RATE):
+        self.ratio = src_rate / dst_rate
+        self.passthrough = src_rate == dst_rate
+        fc = 0.45 * min(src_rate, dst_rate) / src_rate   # ciclos/muestra
+        n = np.arange(self.TAPS) - (self.TAPS - 1) / 2
+        h = np.sinc(2 * fc * n) * np.hamming(self.TAPS)
+        self.h = (h / h.sum()).astype(np.float32)
+        self._tail = np.zeros(self.TAPS - 1, dtype=np.float32)
+        self._pos = 0.0     # posición fraccionaria de la próxima muestra de salida
+
+    def process(self, x: np.ndarray) -> np.ndarray:
+        if self.passthrough or len(x) == 0:
+            return x.astype(np.float32, copy=False)
+        buf = np.concatenate([self._tail, x.astype(np.float32, copy=False)])
+        filt = np.convolve(buf, self.h, mode="valid")      # len(filt) == len(x)
+        self._tail = buf[-(self.TAPS - 1):]
+        if self._pos > len(filt) - 1:
+            self._pos -= len(filt)
+            return np.zeros(0, dtype=np.float32)
+        n_out = int((len(filt) - 1 - self._pos) // self.ratio) + 1
+        idx = self._pos + np.arange(n_out) * self.ratio
+        y = np.interp(idx, np.arange(len(filt)), filt)
+        self._pos = max(0.0, idx[-1] + self.ratio - len(filt))
+        return y.astype(np.float32)
+
+
 class SystemAudioCapture:
-    def __init__(self, chunk_seconds: float = 0.25,
+    def __init__(self, chunk_seconds: float = 0.1,
                  device_check_interval: float = 3.0):
         self.chunk_seconds = chunk_seconds
         self.device_check_interval = device_check_interval
         self.audio_queue: "queue.Queue[np.ndarray]" = queue.Queue()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.muted = False                 # el doblador la silencia mientras habla la voz
+        self.current_device_name = ""      # dispositivo de salida que se está capturando
+
+    def set_muted(self, muted: bool):
+        self.muted = bool(muted)
 
     def _find_loopback_device(self, p: pyaudio.PyAudio) -> dict:
         """Encuentra el dispositivo loopback de la salida por defecto ACTUAL."""
@@ -51,18 +93,13 @@ class SystemAudioCapture:
         except Exception:
             return False  # ante la duda, no reconectar
 
-    def _process(self, data: bytes, channels: int, native_rate: int):
+    def _process(self, data: bytes, channels: int, resampler: Resampler):
         samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
         if channels > 1:
             samples = samples.reshape(-1, channels).mean(axis=1)
-        if native_rate != TARGET_RATE:
-            n_out = int(len(samples) * TARGET_RATE / native_rate)
-            samples = np.interp(
-                np.linspace(0, len(samples), n_out, endpoint=False),
-                np.arange(len(samples)),
-                samples,
-            ).astype(np.float32)
-        self.audio_queue.put(samples)
+        samples = resampler.process(samples)      # siempre, para no cortar el filtro
+        if len(samples) and not self.muted:
+            self.audio_queue.put(samples)
 
     def _capture_loop(self):
         while not self._stop.is_set():
@@ -73,6 +110,7 @@ class SystemAudioCapture:
                 native_rate = int(device["defaultSampleRate"])
                 channels = int(device["maxInputChannels"])
                 frames_per_chunk = int(native_rate * self.chunk_seconds)
+                resampler = Resampler(native_rate)
 
                 stream = p.open(
                     format=pyaudio.paInt16,
@@ -83,6 +121,7 @@ class SystemAudioCapture:
                     input_device_index=device["index"],
                 )
                 current_name = device["name"]
+                self.current_device_name = current_name
                 print(f"[audio] Capturando: {current_name} @ {native_rate} Hz")
 
                 last_check = time.monotonic()
@@ -97,7 +136,7 @@ class SystemAudioCapture:
                             break
                     data = stream.read(frames_per_chunk,
                                        exception_on_overflow=False)
-                    self._process(data, channels, native_rate)
+                    self._process(data, channels, resampler)
 
             except Exception as e:
                 if self._stop.is_set():

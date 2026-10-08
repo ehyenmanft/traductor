@@ -102,7 +102,7 @@ class GroqTranscriber:
         max_segment_sec: float = 4.5,
         hard_max_sec: float = 15.0,
         silence_threshold: float = 0.01,
-        silence_chunks_to_flush: int = 2,
+        silence_sec_to_flush: float = 0.5,   # silencio que cierra una frase
     ):
         self.audio_queue = audio_queue
         self.text_queue: "queue.Queue[TranscriptSegment]" = queue.Queue()
@@ -119,7 +119,7 @@ class GroqTranscriber:
         self.hard_max_samples = int(hard_max_sec * RATE)
         self.base_threshold = silence_threshold
         self.noise_floor = silence_threshold / 2
-        self.silence_chunks_to_flush = silence_chunks_to_flush
+        self.silence_samples_to_flush = int(silence_sec_to_flush * RATE)
         print(f"[groq] Motor remoto listo: {GROQ_MODEL}")
 
     # ---------- llamada a la API ----------
@@ -162,10 +162,11 @@ class GroqTranscriber:
 
     # ---------- umbral dinámico (igual que el motor local) ----------
 
-    def _dynamic_threshold(self, rms: float) -> float:
+    def _dynamic_threshold(self, rms: float, n: int = 4000) -> float:
         thr = min(max(self.noise_floor * 3.0, self.base_threshold * 0.6), 0.05)
         if rms < thr:
-            self.noise_floor = 0.95 * self.noise_floor + 0.05 * rms
+            a = 1 - 0.95 ** (n / 4000)     # misma velocidad que con fragmentos de 0.25 s
+            self.noise_floor = (1 - a) * self.noise_floor + a * rms
         return thr
 
     # ---------- bucle principal ----------
@@ -173,7 +174,7 @@ class GroqTranscriber:
     def _loop(self):
         buffer: list[np.ndarray] = []
         buffered = 0
-        silent_streak = 0
+        silent_samples = 0
         utterance_id = 0
 
         while not self._stop.is_set():
@@ -183,18 +184,18 @@ class GroqTranscriber:
                 continue
 
             rms = float(np.sqrt(np.mean(chunk**2)))
-            is_silent = rms < self._dynamic_threshold(rms)
+            is_silent = rms < self._dynamic_threshold(rms, len(chunk))
 
             if is_silent and buffered == 0:
                 continue
 
             buffer.append(chunk)
             buffered += len(chunk)
-            silent_streak = silent_streak + 1 if is_silent else 0
+            silent_samples = silent_samples + len(chunk) if is_silent else 0
 
             duration = buffered / RATE
             want_flush = (
-                (silent_streak >= self.silence_chunks_to_flush
+                (silent_samples >= self.silence_samples_to_flush
                  and buffered >= self.min_samples)
                 or buffered >= self.max_samples
             )
@@ -211,7 +212,7 @@ class GroqTranscriber:
                     time.sleep(0.2)
 
             audio = np.concatenate(buffer)
-            buffer, buffered, silent_streak = [], 0, 0
+            buffer, buffered, silent_samples = [], 0, 0
             self._transcribe_remote(audio, utterance_id)
             utterance_id += 1
 
