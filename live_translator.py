@@ -151,8 +151,11 @@ class LiveTranslator:
         headers = {"Authorization": f"Bearer {self.groq_key}", "Content-Type": "application/json"}
         r = requests.post(GROQ_URL, headers=headers, json=body, timeout=timeout,
                           stream=bool(on_delta))
-        if r.status_code in (400, 404) and "model" in (r.text or "").lower():
-            self._dead_models.add(model)      # modelo retirado: no volver a intentarlo
+        if r.status_code in (400, 404):
+            if "model" in (r.text or "").lower() or r.status_code == 404:
+                self._dead_models.add(model)  # modelo retirado: no volver a intentarlo
+                self._discover_models()       # y buscar cuáles sí ofrece Groq ahora
+            raise RuntimeError(f"{r.status_code} {(r.text or '')[:140]}")
         r.raise_for_status()
         if not on_delta:
             return _clean(r.json()["choices"][0]["message"]["content"])
@@ -171,6 +174,33 @@ class LiveTranslator:
                 out += delta
                 on_delta(out)
         return _clean(out)
+
+    def _discover_models(self):
+        """Los modelos de Groq se retiran con el tiempo: pregunta cuáles hay y elige el mejor y el rápido."""
+        if time.time() - getattr(self, "_discovered", 0) < 600 or not self.groq_key:
+            return
+        self._discovered = time.time()
+        try:
+            r = requests.get(GROQ_URL.rsplit("/chat/", 1)[0] + "/models", timeout=8,
+                             headers={"Authorization": f"Bearer {self.groq_key}"})
+            r.raise_for_status()
+            ids = [m["id"] for m in r.json().get("data", []) if m.get("active", True)]
+        except Exception as e:  # noqa: BLE001
+            print(f"[translator] no pude listar modelos de Groq: {type(e).__name__}: {str(e)[:100]}")
+            return
+        skip = ("whisper", "guard", "tts", "embed", "orpheus", "playai", "distil", "compound", "safeguard", "vision")
+        chat = [i for i in ids if not any(k in i.lower() for k in skip)]
+        if not chat:
+            return
+
+        def score(i, words):
+            return sum(w in i.lower() for w in words)
+        big = sorted(chat, key=lambda i: -score(i, ("llama", "70b", "versatile", "gpt-oss-120b", "qwen")))
+        fast = sorted(chat, key=lambda i: -score(i, ("8b", "instant", "20b", "small")))
+        self.final_models = list(dict.fromkeys(big[:2] + fast[:1]))
+        self.partial_model = fast[0]
+        self._dead_models.difference_update(self.final_models + [self.partial_model])
+        print(f"[translator] modelos de Groq elegidos: {self.final_models} (parciales: {self.partial_model})")
 
     # ---------- Google (respaldo) con glosario protegido ----------
 
@@ -262,9 +292,13 @@ class LiveTranslator:
 
         result, errors = "", []
         if self.groq_ok:
-            for model in self.final_models:
-                if model in self._dead_models:
-                    continue
+            tried: set[str] = set()
+            while not result and self.groq_ok:
+                pending = [m for m in self.final_models if m not in self._dead_models and m not in tried]
+                if not pending:
+                    break
+                model = pending[0]          # se relee cada vuelta: _discover_models puede cambiar la lista
+                tried.add(model)
                 try:
                     result = self._groq(model, self._messages(text, src, True), 220, 8.0, on_delta)
                     if not _bad(result):
@@ -276,8 +310,6 @@ class LiveTranslator:
                     errors.append(f"{model}: {type(e).__name__}: {str(e)[:140]}")
                     print(f"[translator] {errors[-1]}")
                     self._groq_failed()
-                    if not self.groq_ok:
-                        break
         elif self.groq_key:
             errors.append("Groq en pausa (4 fallos seguidos)")
         for name, fn in (("Google", self._google), ("MyMemory", self._mymemory)):

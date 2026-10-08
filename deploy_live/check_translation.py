@@ -30,6 +30,13 @@ def run(name, fn):
 
 print("Probando traducir al español:")
 if groq:
+    try:
+        import requests
+        r = requests.get("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {groq}"}, timeout=10)
+        print(f"  modelos que ofrece tu cuenta de Groq (HTTP {r.status_code}):",
+              ", ".join(m["id"] for m in r.json().get("data", [])) if r.ok else r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        print(f"  no pude listar modelos: {type(e).__name__}")
     for model in (BIG_MODEL, FAST_MODEL):
         run(f"Groq {model}", lambda m=model: t._groq(m, t._messages(text, "en", False), 120, 10.0))
 run("Google Translate", lambda: t._google(text, "en"))

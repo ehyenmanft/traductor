@@ -118,6 +118,23 @@ class Translator(unittest.TestCase):
             t3.translate_final("hello", "en")
         self.assertIn("saturado", probs[0])
 
+    def test_retired_models_are_replaced_by_the_ones_groq_lists(self):
+        class R:
+            def __init__(self, code, js=None, text=""): self.status_code, self._js, self.text, self.ok = code, js, text, code < 400
+            def json(self): return self._js
+            def raise_for_status(self): pass
+        calls = []
+        def post(url, **k):
+            m = k["json"]["model"]; calls.append(m)
+            return R(200, {"choices": [{"message": {"content": "Hola"}}]}) if m == "nuevo-llama-70b" else R(404, text="model not found")
+        listing = R(200, {"data": [{"id": "whisper-large-v3", "active": True}, {"id": "nuevo-llama-70b", "active": True},
+                                   {"id": "nuevo-llama-8b-instant", "active": True}]})
+        t = make()
+        with mock.patch.object(lt.requests, "post", post), mock.patch.object(lt.requests, "get", return_value=listing):
+            self.assertEqual(t.translate_final("hello", "en"), "Hola")
+        self.assertEqual(t.final_models[0], "nuevo-llama-70b"); self.assertNotIn("whisper-large-v3", t.final_models)
+        self.assertEqual(t.partial_model, "nuevo-llama-8b-instant")
+
     def test_no_problem_reported_when_something_works(self):
         probs = []
         t = lt.LiveTranslator(target="es", groq_key=""); t.on_problem = probs.append
