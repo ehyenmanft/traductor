@@ -59,15 +59,26 @@ class DeepgramTranscriber:
             return "auto"
         return max(set(self._utt_langs), key=self._utt_langs.count)
 
-    def _flush_final(self):
-        """Cierra la frase en curso con lo ya confirmado por Deepgram."""
-        final_text = clean_text(" ".join(self._final_parts).strip())
+    def _flush_final(self, with_partial: bool = False):
+        """Cierra la frase en curso con lo ya confirmado por Deepgram. Con `with_partial` (conexión cortada)
+        incluye también lo último que se vio sin confirmar: nada de lo dicho se pierde."""
+        final_text = " ".join(self._final_parts).strip()
+        if (with_partial or not final_text) and len(self._last_partial) > len(final_text):
+            final_text = self._last_partial
+        final_text = clean_text(final_text)
         if final_text:
             self.text_queue.put(TranscriptSegment(
                 self._uid, final_text, self._majority_lang(), 1.0, is_final=True))
             self._uid += 1
         self._final_parts, self._utt_langs = [], []
         self._last_partial = ""
+
+    @staticmethod
+    def _too_long(text: str) -> bool:
+        """Quien habla sin pausas (un streamer, un narrador) no cierra nunca la frase y nada se traduce hasta
+        el final: se corta cada ~260 caracteres en un punto, o a los 450 pase lo que pase."""
+        n = len(text)
+        return n >= 450 or (n >= 260 and text.rstrip()[-1:] in ".?!…。！？")
 
     def handle_message(self, msg: dict):
         if msg.get("type") == "UtteranceEnd":
@@ -89,7 +100,7 @@ class DeepgramTranscriber:
                 self._final_parts.append(text)
                 self._utt_langs.extend(langs)
             current = " ".join(self._final_parts).strip()
-            if msg.get("speech_final"):
+            if msg.get("speech_final") or self._too_long(current):
                 self._flush_final()
                 return
         else:
@@ -172,6 +183,7 @@ class DeepgramTranscriber:
                     ws.send_binary(pcm)
                     last_send = time.monotonic()
 
+                self._flush_final(True)              # lo dicho justo antes de cortar no se pierde
                 try:
                     ws.send(json.dumps({"type": "CloseStream"}))
                     ws.close()
@@ -179,6 +191,7 @@ class DeepgramTranscriber:
                     pass
 
             except Exception as e:
+                self._flush_final(True)
                 if self._stop.is_set():
                     return
                 if getattr(e, "status_code", None) == 400 and self.keyterms:

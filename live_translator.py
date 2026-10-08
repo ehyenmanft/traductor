@@ -56,6 +56,17 @@ def _clean(text: str) -> str:
     return re.sub(r'^["\'«“]+|["\'»”]+$', "", text).strip()
 
 
+_CJK = ("ja", "ko", "zh-cn")
+
+
+def _complete(src_text: str, out: str, src: str, target: str) -> bool:
+    """¿La traducción conserva el contenido? Una frase larga que sale mucho más corta es señal de que el
+    modelo omitió o resumió. (Entre idiomas CJK y no CJK las longitudes no son comparables: se exime.)"""
+    if len(src_text) < 40 or src in _CJK or target in _CJK:
+        return True
+    return len(out.strip()) >= 0.45 * len(src_text.strip())
+
+
 def _bad(text: str | None) -> bool:
     r = (text or "").strip().lower()
     return (not r or "<html" in r or "error 500" in r or "server error" in r
@@ -76,6 +87,7 @@ class LiveTranslator:
         self._cache: dict[tuple, str] = {}
         self._dead_models: set[str] = set()
         self._fail_until = 0.0
+        self._partial_pause = 0.0
         self._fails = 0
         self._lock = threading.Lock()
         self.on_problem = None            # on_problem(mensaje): una frase NO se pudo traducir
@@ -121,8 +133,10 @@ class LiveTranslator:
         p = (f"You are a real-time subtitle translator. Translate spoken language "
              f"({LANG_NAMES.get(src, 'any language')}) into {LANG_NAMES.get(self.target, self.target)}. "
              f"Style: {TONES[self.tone][1]}. Keep lines short, natural and faithful; keep proper "
-             "nouns, names and numbers. The earlier turns are previous lines of the same "
-             "conversation: use them for consistency, never repeat them. ")
+             "nouns, names and numbers. Translate EVERYTHING that was said, every word and "
+             "every sentence: never omit, shorten, summarize or merge content, and keep "
+             "interjections and filler that carry meaning. The earlier turns are previous "
+             "lines of the same conversation: use them only for consistency, never repeat them. ")
         keep = [k for k, v in self.glossary.items() if k.lower() == v.lower()]
         fixed = [(k, v) for k, v in self.glossary.items() if k.lower() != v.lower()]
         if fixed:
@@ -145,7 +159,7 @@ class LiveTranslator:
     # ---------- Groq ----------
 
     def _groq(self, model: str, messages: list[dict], max_tokens: int, timeout: float,
-              on_delta=None) -> str:
+              on_delta=None, retry_429: bool = False) -> str:
         body = {"model": model, "messages": messages, "temperature": 0.1,
                 "max_tokens": max_tokens, "stream": bool(on_delta)}
         headers = {"Authorization": f"Bearer {self.groq_key}", "Content-Type": "application/json"}
@@ -159,6 +173,14 @@ class LiveTranslator:
             body["max_tokens"] = max(max_tokens, 400)
         r = requests.post(GROQ_URL, headers=headers, json=body, timeout=timeout,
                           stream=bool(on_delta))
+        if r.status_code == 429 and retry_429:           # límite por minuto: esperar y repetir, no perder la frase
+            try:
+                wait = float(r.headers.get("retry-after", "") or 2.0)
+            except ValueError:
+                wait = 2.0
+            time.sleep(min(max(wait, 0.5), 5.0))
+            r = requests.post(GROQ_URL, headers=headers, json=body, timeout=timeout,
+                              stream=bool(on_delta))
         if r.status_code == 400 and "reasoning" in (r.text or "").lower():
             for k in ("reasoning_effort", "include_reasoning"):   # esa versión no admite el ajuste: sin él
                 body.pop(k, None)
@@ -207,9 +229,10 @@ class LiveTranslator:
             return
 
         def score(i, words):
-            return sum(w in i.lower() for w in words)
-        big = sorted(chat, key=lambda i: -score(i, ("llama", "70b", "versatile", "gpt-oss-120b", "qwen")))
-        fast = sorted(chat, key=lambda i: -score(i, ("8b", "instant", "20b", "small")))
+            tokens = set(re.split(r"[^a-z0-9.]+", i.lower()))
+            return sum(w in tokens for w in words)
+        big = sorted(chat, key=lambda i: -(score(i, ("llama", "70b", "versatile", "120b", "qwen3", "32b", "27b"))))
+        fast = sorted(chat, key=lambda i: -(score(i, ("8b", "instant", "20b", "small", "7b"))))
         self.final_models = list(dict.fromkeys(big[:2] + fast[:1]))
         self.partial_model = fast[0]
         self._dead_models.difference_update(self.final_models + [self.partial_model])
@@ -269,22 +292,21 @@ class LiveTranslator:
     # ---------- API ----------
 
     def translate_partial(self, text: str, src: str) -> str:
-        """Rápida y barata: modelo pequeño, con contexto; sin streaming."""
+        """Rápida y barata: modelo pequeño, con contexto; sin streaming. Sus fallos NUNCA frenan a las
+        frases finales (pausa propia), para que los parciales no gasten el límite de Groq de las finales."""
         text = text.strip()
         if not text or norm_lang(src) == self.target:
             return text
-        if self.groq_ok and self.partial_model not in self._dead_models:
+        if self.groq_key:
+            if time.monotonic() < self._partial_pause or self.partial_model in self._dead_models:
+                return ""
             try:
                 out = self._groq(self.partial_model, self._messages(text, norm_lang(src), True),
-                                 160, 4.0)
-                self._fails = 0
-                if not _bad(out):
-                    return out
+                                 min(400, 60 + 2 * len(text)), 4.0)
+                return "" if _bad(out) else out
             except Exception:  # noqa: BLE001
-                self._groq_failed()
+                self._partial_pause = time.monotonic() + 8.0     # respira: sin parciales 8 s
                 return ""                     # un parcial perdido no justifica llamar a Google
-        elif self.groq_key:
-            return ""
         try:
             out = self._google(text, src)
             return "" if _bad(out) else out
@@ -303,7 +325,7 @@ class LiveTranslator:
         if key in self._cache:
             return self._cache[key]
 
-        result, errors = "", []
+        result, errors, best = "", [], ""
         if self.groq_ok:
             tried: set[str] = set()
             while not result and self.groq_ok:
@@ -313,12 +335,16 @@ class LiveTranslator:
                 model = pending[0]          # se relee cada vuelta: _discover_models puede cambiar la lista
                 tried.add(model)
                 try:
-                    result = self._groq(model, self._messages(text, src, True), 220, 8.0, on_delta)
-                    if not _bad(result):
-                        self._fails = 0
-                        break
-                    result = ""
-                    errors.append(f"{model}: respuesta vacía")
+                    out = self._groq(model, self._messages(text, src, True), min(1200, 150 + 3 * len(text)),
+                                     10.0, on_delta, retry_429=True)
+                    self._fails = 0
+                    if _bad(out):
+                        errors.append(f"{model}: respuesta vacía")
+                    elif not _complete(text, out, src, self.target):
+                        errors.append(f"{model}: traducción incompleta")
+                        best = max(best, out, key=len)
+                    else:
+                        result = out
                 except Exception as e:  # noqa: BLE001
                     errors.append(f"{model}: {type(e).__name__}: {str(e)[:140]}")
                     print(f"[translator] {errors[-1]}")
@@ -332,11 +358,16 @@ class LiveTranslator:
                 out = fn(text, src)
                 if _bad(out):
                     errors.append(f"{name}: respuesta vacía")
-                else:
+                elif _complete(text, out, src, self.target) or len(out) >= len(best):
                     result = out
+                else:
+                    best = out
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{name}: {type(e).__name__}: {str(e)[:140]}")
                 print(f"[translator] {errors[-1]}")
+        if not result and best:
+            result = best                    # incompleta, pero es lo mejor que hay: mejor eso que el original
+            print(f"[translator] aviso: traducción posiblemente incompleta ({len(best)}/{len(text)} caracteres)")
         if not result:
             self._problem(errors)
         result = result or text
@@ -356,10 +387,12 @@ class LiveTranslationWorker:
     """Dos hilos: finales (cola ordenada, nunca se pierden) y parciales (solo el último)."""
 
     def __init__(self, translator: LiveTranslator, emit, stop: threading.Event,
-                 debounce: float = 0.25, translate_partials: bool = True, on_final=None):
+                 debounce: float = 0.25, translate_partials: bool = True, on_final=None,
+                 min_gap: float = 1.0):
         self.tr, self.emit, self.stop = translator, emit, stop
         self.on_final = on_final                  # on_final(uid, traducción, original, idioma)
         self.debounce = debounce
+        self.min_gap = min_gap                    # segundos mínimos entre dos traducciones de parciales
         self.translate_partials = translate_partials
         self._finals: "queue.Queue[tuple[int, str, str]]" = queue.Queue()
         self._cond = threading.Condition()
@@ -412,6 +445,7 @@ class LiveTranslationWorker:
     # ---- parciales ----
     def _partial_loop(self):
         last: dict[int, str] = {}
+        last_call = 0.0
         while not self.stop.is_set():
             with self._cond:
                 if self._partial is None:
@@ -426,6 +460,12 @@ class LiveTranslationWorker:
             uid, text, lang = item
             if uid in self._finalized or last.get(uid) == text:
                 continue
+            if not self._finals.empty():          # primero lo definitivo: los parciales no compiten con las finales
+                continue
+            gap = self.min_gap - (time.monotonic() - last_call)
+            if gap > 0:                            # techo de llamadas: no agotar el límite por minuto de Groq
+                time.sleep(gap)
+            last_call = time.monotonic()
             out = self.tr.translate_partial(text, lang)
             if out and uid not in self._finalized:   # la final puede haber llegado mientras tanto
                 last[uid] = text

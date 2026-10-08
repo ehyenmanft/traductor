@@ -147,6 +147,57 @@ class Translator(unittest.TestCase):
             out = t._groq("openai/gpt-oss-120b", [{"role": "user", "content": "x"}], 220, 5.0)
         self.assertEqual(out, "Hola"); self.assertEqual(seen[0]["reasoning_effort"], "low"); self.assertGreaterEqual(seen[0]["max_tokens"], 400)
 
+    def test_truncated_translation_is_rejected_and_next_source_is_used(self):
+        long = "So today we are going to talk about the new update, the patch notes and everything that changed in the game since last week."
+        short = "Hoy hablamos de la actualización."
+        full = "Hoy vamos a hablar de la nueva actualización, las notas del parche y todo lo que cambió en el juego desde la semana pasada."
+        class R:
+            status_code, text, headers = 200, "", {}
+            def __init__(self, c): self.c = c
+            def raise_for_status(self): pass
+            def json(self): return {"choices": [{"message": {"content": self.c}}]}
+        outs = iter([short, full])
+        t = make(final_models=["a", "b"])
+        with mock.patch.object(lt.requests, "post", lambda *a, **k: R(next(outs))):
+            self.assertEqual(t.translate_final(long, "en"), full)         # el resumen se descarta
+        t2 = make(final_models=["a"])
+        with mock.patch.object(lt.requests, "post", lambda *a, **k: R(short)), \
+             mock.patch.object(t2, "_google", return_value=full), mock.patch.object(t2, "_mymemory", return_value=""):
+            self.assertEqual(t2.translate_final(long, "en"), full)          # y se recurre a Google si hace falta
+        t3 = make(final_models=["a"])
+        with mock.patch.object(lt.requests, "post", lambda *a, **k: R(short)), \
+             mock.patch.object(t3, "_google", side_effect=RuntimeError("x")), mock.patch.object(t3, "_mymemory", side_effect=RuntimeError("y")):
+            self.assertEqual(t3.translate_final(long, "en"), short)         # peor caso: algo traducido, no el original
+
+    def test_failing_partials_never_open_the_breaker_used_by_finals(self):
+        t = make()
+        with mock.patch.object(lt.requests, "post", side_effect=RuntimeError("429")):
+            for _ in range(10):
+                t._partial_pause = 0.0
+                t.translate_partial("hello there my friend", "en")
+        self.assertTrue(t.groq_ok)                                           # las finales siguen usando Groq
+        self.assertGreater(t._partial_pause, time.monotonic())
+
+    def test_final_waits_and_retries_on_rate_limit(self):
+        class R:
+            def __init__(self, code): self.status_code, self.headers, self.text = code, {"retry-after": "0.5"}, ""
+            def raise_for_status(self): pass
+            def json(self): return {"choices": [{"message": {"content": "Hola a todos"}}]}
+        seq = iter([R(429), R(200)])
+        t = make(final_models=["a"])
+        with mock.patch.object(lt.requests, "post", lambda *a, **k: next(seq)):
+            self.assertEqual(t.translate_final("hello everyone", "en"), "Hola a todos")
+
+    def test_model_choice_does_not_confuse_120b_with_20b(self):
+        listing = type("L", (), {"status_code": 200, "ok": True, "raise_for_status": lambda self: None,
+                                 "json": lambda self: {"data": [{"id": "openai/gpt-oss-120b"}, {"id": "openai/gpt-oss-20b"},
+                                                                {"id": "qwen/qwen3.8-27b"}]}})()
+        t = make()
+        with mock.patch.object(lt.requests, "get", return_value=listing):
+            t._discover_models()
+        self.assertEqual(t.partial_model, "openai/gpt-oss-20b")              # los parciales usan el pequeño
+        self.assertEqual(t.final_models[0], "openai/gpt-oss-120b")
+
     def test_no_problem_reported_when_something_works(self):
         probs = []
         t = lt.LiveTranslator(target="es", groq_key=""); t.on_problem = probs.append
