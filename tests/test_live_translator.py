@@ -135,6 +135,18 @@ class Translator(unittest.TestCase):
         self.assertEqual(t.final_models[0], "nuevo-llama-70b"); self.assertNotIn("whisper-large-v3", t.final_models)
         self.assertEqual(t.partial_model, "nuevo-llama-8b-instant")
 
+    def test_reasoning_models_get_low_effort_and_think_tags_are_stripped(self):
+        class R:
+            status_code, text = 200, ""
+            def raise_for_status(self): pass
+            def json(self): return {"choices": [{"message": {"content": "<think>hmm</think>Hola"}}]}
+        seen = []
+        def post(url, **k): seen.append(k["json"]); return R()
+        t = make()
+        with mock.patch.object(lt.requests, "post", post):
+            out = t._groq("openai/gpt-oss-120b", [{"role": "user", "content": "x"}], 220, 5.0)
+        self.assertEqual(out, "Hola"); self.assertEqual(seen[0]["reasoning_effort"], "low"); self.assertGreaterEqual(seen[0]["max_tokens"], 400)
+
     def test_no_problem_reported_when_something_works(self):
         probs = []
         t = lt.LiveTranslator(target="es", groq_key=""); t.on_problem = probs.append

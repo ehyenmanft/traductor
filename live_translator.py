@@ -52,7 +52,7 @@ def norm_lang(code: str) -> str:
 
 
 def _clean(text: str) -> str:
-    text = (text or "").strip()
+    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip()
     return re.sub(r'^["\'«“]+|["\'»”]+$', "", text).strip()
 
 
@@ -149,8 +149,21 @@ class LiveTranslator:
         body = {"model": model, "messages": messages, "temperature": 0.1,
                 "max_tokens": max_tokens, "stream": bool(on_delta)}
         headers = {"Authorization": f"Bearer {self.groq_key}", "Content-Type": "application/json"}
+        low = model.lower()
+        if "gpt-oss" in low:                  # modelos que razonan: sin esto gastan los tokens "pensando"
+            body["reasoning_effort"] = "low"
+            body["include_reasoning"] = False
+            body["max_tokens"] = max(max_tokens, 400)
+        elif "qwen" in low:
+            body["reasoning_effort"] = "none"
+            body["max_tokens"] = max(max_tokens, 400)
         r = requests.post(GROQ_URL, headers=headers, json=body, timeout=timeout,
                           stream=bool(on_delta))
+        if r.status_code == 400 and "reasoning" in (r.text or "").lower():
+            for k in ("reasoning_effort", "include_reasoning"):   # esa versión no admite el ajuste: sin él
+                body.pop(k, None)
+            r = requests.post(GROQ_URL, headers=headers, json=body, timeout=timeout,
+                              stream=bool(on_delta))
         if r.status_code in (400, 404):
             if "model" in (r.text or "").lower() or r.status_code == 404:
                 self._dead_models.add(model)  # modelo retirado: no volver a intentarlo
