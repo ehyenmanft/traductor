@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from audio_capture import SystemAudioCapture
 from overlay import AVAILABLE_LANGUAGES, TranslationOverlay
 from transcriber import StreamingTranscriber
+from live_dubber import LiveDubber, PyAudioPlayer
 from live_translator import (TONES, LiveTranslationWorker, LiveTranslator,
                              norm_lang)
 
@@ -86,7 +87,8 @@ class Bridge(QObject):
     """Puente thread → hilo de UI de Qt."""
     upsert = pyqtSignal(int, str, str, bool)  # uid, original, idioma, final
     set_trans = pyqtSignal(int, str)          # uid, traducción
-    hotkey = pyqtSignal(str)                  # "f6".."f10" desde hook global
+    hotkey = pyqtSignal(str)                  # "f6".."f11" desde hook global
+    notice = pyqtSignal(str)                  # avisos breves (doblaje, etc.)
 
 
 def setup_global_hotkeys(bridge: Bridge) -> bool:
@@ -97,14 +99,15 @@ def setup_global_hotkeys(bridge: Bridge) -> bool:
     except ImportError:
         return False
     try:
-        for key in ("f6", "f7", "f8", "f9", "f10"):
+        for key in ("f6", "f7", "f8", "f9", "f10", "f11"):
             keyboard.add_hotkey(key, lambda k=key: bridge.hotkey.emit(k))
         return True
     except Exception:
         return False
 
 
-def setup_system_tray(app: QApplication, overlay: TranslationOverlay, translator: LiveTranslator) -> QSystemTrayIcon:
+def setup_system_tray(app: QApplication, overlay: TranslationOverlay, translator: LiveTranslator,
+                      dubber: LiveDubber) -> QSystemTrayIcon:
     """Crea el icono en la bandeja del sistema (System Tray) con menú rápido."""
     tray = QSystemTrayIcon(app)
     icon_path = os.path.join(app_dir(), "traductor.ico")
@@ -193,6 +196,50 @@ def setup_system_tray(app: QApplication, overlay: TranslationOverlay, translator
         tone_group.addAction(act_tone)
         tone_menu.addAction(act_tone)
 
+    # ---- Doblaje de voz ----
+    act_dub = QAction("🔊 Doblaje de voz (F11)", menu, checkable=True)
+    act_dub.setChecked(dubber.enabled)
+    act_dub.triggered.connect(lambda checked: overlay.dub_toggle_requested.emit())
+    menu.addAction(act_dub)
+
+    voice_menu = menu.addMenu("   🎙 Voz del doblaje")
+    voice_menu.setStyleSheet(menu.styleSheet())
+    voice_group = QActionGroup(voice_menu)
+    for key, label in (("female", "Voz de mujer"), ("male", "Voz de hombre")):
+        a = QAction(label, voice_menu, checkable=True)
+        a.setChecked(dubber.gender == key)
+
+        def _on_voice(checked, k=key):
+            dubber.set_gender(k)
+            overlay.save_setting("dub_gender", k)
+
+        a.triggered.connect(_on_voice)
+        voice_group.addAction(a)
+        voice_menu.addAction(a)
+
+    dev_menu = menu.addMenu("   🎧 Salida de la voz")
+    dev_menu.setStyleSheet(menu.styleSheet())
+    dev_group = QActionGroup(dev_menu)
+
+    def _fill_devices():
+        dev_menu.clear()
+        options = [("", "Predeterminada (silencia la captura mientras habla)")]
+        options += [(n, n) for n in dubber.player.list_outputs()]
+        for value, label in options:
+            a = QAction(label if len(label) < 60 else label[:57] + "…", dev_menu, checkable=True)
+            a.setChecked(dubber.device == value)
+
+            def _on_dev(checked, v=value):
+                dubber.set_device(v)
+                overlay.save_setting("dub_device", v)
+                overlay._flash("🎧 Salida de voz: " + (v or "predeterminada"))
+
+            a.triggered.connect(_on_dev)
+            dev_group.addAction(a)
+            dev_menu.addAction(a)
+
+    dev_menu.aboutToShow.connect(_fill_devices)
+
     act_gloss = QAction("📖 Recargar glosario (config.json)", menu)
 
     def _reload_glossary():
@@ -240,6 +287,7 @@ def setup_system_tray(app: QApplication, overlay: TranslationOverlay, translator
 
     overlay.language_changed.connect(_on_overlay_lang_changed)
 
+    tray.sync_dub = lambda: act_dub.setChecked(dubber.enabled)
     tray.show()
     return tray
 
@@ -297,23 +345,44 @@ def main():
     bridge.upsert.connect(overlay.upsert_entry)
     bridge.set_trans.connect(overlay.set_translation)
     bridge.hotkey.connect(overlay.handle_hotkey)
+    bridge.notice.connect(overlay._flash)
 
-    tray = setup_system_tray(app, overlay, translator)
+    capture = SystemAudioCapture()
+    dubber = LiveDubber(
+        target=translator.target, gender=str(_cfg_value("dub_gender", "female")),
+        device=str(_cfg_value("dub_device", "") or ""),
+        volume=float(_cfg_value("dub_volume", 1.0)),
+        max_backlog=int(_cfg_value("dub_max_backlog", 2)),
+        enabled=bool(_cfg_value("dub", False)),
+        on_gate=capture.set_muted, capture_device=lambda: capture.current_device_name,
+        on_notice=bridge.notice.emit)
+    overlay.language_changed.connect(dubber.set_target)
+
+    tray = setup_system_tray(app, overlay, translator, dubber)
+
+    def _toggle_dub():
+        on = dubber.toggle()
+        overlay.save_setting("dub", on)
+        tray.sync_dub()
+        overlay._flash("🔊 Doblaje de voz: ACTIVADO" if on else "🔇 Doblaje de voz: apagado")
+
+    overlay.dub_toggle_requested.connect(_toggle_dub)
 
     if setup_global_hotkeys(bridge):
         overlay.disable_local_shortcuts()
         print("[hotkeys] Globales activos: F6 gaming, F7 opacidad, F8 clics, "
-              "F9 ocultar, F10 compacto")
+              "F9 ocultar, F10 compacto, F11 doblaje")
     else:
         print("[hotkeys] Solo locales (instala 'keyboard' para globales)")
 
-    capture = SystemAudioCapture()
     transcriber = build_transcriber(args, capture.audio_queue)
 
     stop = threading.Event()
     worker = LiveTranslationWorker(
         translator, bridge.set_trans.emit, stop,
-        translate_partials=bool(_cfg_value("translate_partials", True)))
+        translate_partials=bool(_cfg_value("translate_partials", True)),
+        on_final=lambda uid, text, src, lang: (
+            dubber.submit(uid, text) if text.strip() != src.strip() else None))
     capture.start()
     transcriber.start()
     threading.Thread(
@@ -322,6 +391,7 @@ def main():
     ).start()
 
     code = app.exec()
+    dubber.stop()
     stop.set()
     transcriber.stop()
     capture.stop()

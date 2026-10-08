@@ -27,6 +27,8 @@ echo [BUILD] Empaquetando (esto tarda varios minutos)...
     --name TraductorEnVivo ^
     --icon traductor.ico ^
     --collect-all faster_whisper ^
+    --collect-all edge_tts ^
+    --hidden-import style_dialog ^
     main.py
 if errorlevel 1 (
     echo [ERROR] Fallo el empaquetado. Revisa el mensaje de arriba.

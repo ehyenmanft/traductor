@@ -49,6 +49,7 @@ AVAILABLE_LANGUAGES = [
 
 class TranslationOverlay(QWidget):
     language_changed = pyqtSignal(str)
+    dub_toggle_requested = pyqtSignal()     # F11 / botón: alternar doblaje de voz
 
     def __init__(self, width: int | None = None, opacity: int | None = None, target_lang: str = "es"):
         super().__init__()
@@ -95,7 +96,8 @@ class TranslationOverlay(QWidget):
                                  max(9, self.font_size - 3), italic=True)
         self.title.setToolTip(
             "F6: Gaming Subtitle · F7: Opacidad · F8: Click-through\n"
-            "F9: Ocultar · F10: Compacto · Ctrl+rueda: Tamaño fuente\n"
+            "F9: Ocultar · F10: Compacto · F11: Doblaje de voz\n"
+            "Ctrl+rueda: Tamaño fuente\n"
             "Arrastrar: Mover ventana")
         self.bar.addWidget(self.title)
         self.bar.addStretch()
@@ -181,6 +183,7 @@ class TranslationOverlay(QWidget):
             QShortcut(QKeySequence("F8"), self, activated=self.toggle_click_through),
             QShortcut(QKeySequence("F9"), self, activated=self.toggle_visible),
             QShortcut(QKeySequence("F10"), self, activated=self.toggle_compact),
+            QShortcut(QKeySequence("F11"), self, activated=self.dub_toggle_requested.emit),
         ]
 
         # Auto-atenuado por inactividad
@@ -425,6 +428,7 @@ class TranslationOverlay(QWidget):
             "f8": self.toggle_click_through,
             "f9": self.toggle_visible,
             "f10": self.toggle_compact,
+            "f11": self.dub_toggle_requested.emit,
         }
         action = actions.get(name.lower())
         if action:

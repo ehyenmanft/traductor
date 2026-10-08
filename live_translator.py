@@ -270,8 +270,9 @@ class LiveTranslationWorker:
     """Dos hilos: finales (cola ordenada, nunca se pierden) y parciales (solo el último)."""
 
     def __init__(self, translator: LiveTranslator, emit, stop: threading.Event,
-                 debounce: float = 0.25, translate_partials: bool = True):
+                 debounce: float = 0.25, translate_partials: bool = True, on_final=None):
         self.tr, self.emit, self.stop = translator, emit, stop
+        self.on_final = on_final                  # on_final(uid, traducción, original, idioma)
         self.debounce = debounce
         self.translate_partials = translate_partials
         self._finals: "queue.Queue[tuple[int, str, str]]" = queue.Queue()
@@ -316,6 +317,11 @@ class LiveTranslationWorker:
             final_text = self.tr.translate_final(text, lang, on_delta)
             self.emit(uid, final_text)
             self._shown.pop(uid, None)
+            if self.on_final:
+                try:
+                    self.on_final(uid, final_text, text, lang)
+                except Exception as e:  # noqa: BLE001 — el doblaje nunca debe romper la traducción
+                    print(f"[translator] on_final: {type(e).__name__}")
 
     # ---- parciales ----
     def _partial_loop(self):

@@ -142,3 +142,15 @@ Este proyecto está bajo la Licencia MIT. Consulta el archivo [LICENSE](LICENSE)
 - Deepgram: `UtteranceEnd` (no deja frases abiertas con ruido de fondo), `KeepAlive` (no reconecta tras silencios; el loopback de Windows no emite audio en silencio), `"endpointing_ms"` y `"keyterms"` configurables.
 
 Pruebas: `python -m unittest discover tests` (no requieren Windows ni claves).
+
+**Overlay personalizable (🎨)** — `overlay_style.py`, `subtitle_view.py`, `style_dialog.py`
+- Botón 🎨 del overlay (o bandeja → 🎨 Personalizar estilo…): estilo listo (Gamer, Clásico, Cine, Minimal, Neón, Terminal), fuente, tamaño, colores (traducción, original, etiqueta, contorno), **contorno** y sombra reales, alineación, líneas visibles, tamaño del original, opacidad, posición 3×3 y plantillas propias. Todo se aplica en vivo y se guarda en `config.json` (`"style"`).
+- El modo HUD (F6) usa un visor propio con alto automático y frases completas; antes el contorno (`text-shadow`) no se dibujaba nunca porque Qt no lo soporta y la segunda frase salía recortada.
+
+**Doblaje de voz en vivo (F11)** — `live_dubber.py`
+- Lee en voz alta cada traducción final con voces neuronales (`edge-tts`, necesita internet). Activa/desactiva con **F11** o desde la bandeja (🔊 Doblaje de voz), donde también eliges voz (mujer/hombre) y dispositivo de salida.
+- **Anti-realimentación:** si la voz sale por el mismo dispositivo que se captura, la captura se silencia mientras habla (se pierde ese tramo del audio original). Para no perderlo, elige en la bandeja otra salida para la voz (por ejemplo unos audífonos distintos del dispositivo capturado).
+- Si se atrasa, descarta las frases más antiguas (`"dub_max_backlog"`, 2 por defecto) y acelera la voz hasta un 40 %. Tras 3 fallos seguidos (¿sin internet?) se desactiva solo y avisa.
+- Ajustes en `config.json`: `"dub"`, `"dub_gender"`, `"dub_device"`, `"dub_volume"`, `"dub_max_backlog"`.
+
+> Para actualizar el `.exe` ejecuta de nuevo `build.bat` en Windows (añade `edge-tts` al paquete). La captura WASAPI, las voces reales y el `.exe` no se pueden probar fuera de Windows: lo verificado automáticamente son la lógica, la interfaz (modo offscreen) y los audios de prueba.

@@ -59,6 +59,11 @@ class SystemAudioCapture:
         self.audio_queue: "queue.Queue[np.ndarray]" = queue.Queue()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.muted = False                 # el doblador la silencia mientras habla la voz
+        self.current_device_name = ""      # dispositivo de salida que se está capturando
+
+    def set_muted(self, muted: bool):
+        self.muted = bool(muted)
 
     def _find_loopback_device(self, p: pyaudio.PyAudio) -> dict:
         """Encuentra el dispositivo loopback de la salida por defecto ACTUAL."""
@@ -92,8 +97,8 @@ class SystemAudioCapture:
         samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
         if channels > 1:
             samples = samples.reshape(-1, channels).mean(axis=1)
-        samples = resampler.process(samples)
-        if len(samples):
+        samples = resampler.process(samples)      # siempre, para no cortar el filtro
+        if len(samples) and not self.muted:
             self.audio_queue.put(samples)
 
     def _capture_loop(self):
@@ -116,6 +121,7 @@ class SystemAudioCapture:
                     input_device_index=device["index"],
                 )
                 current_name = device["name"]
+                self.current_device_name = current_name
                 print(f"[audio] Capturando: {current_name} @ {native_rate} Hz")
 
                 last_check = time.monotonic()

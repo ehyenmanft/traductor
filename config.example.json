@@ -15,5 +15,10 @@
     "Black Mesa": "Black Mesa"
   },
   "keyterms": [],
-  "endpointing_ms": 300
+  "endpointing_ms": 300,
+  "dub": false,
+  "dub_gender": "female",
+  "dub_device": "",
+  "dub_volume": 1.0,
+  "dub_max_backlog": 2
 }

@@ -30,6 +30,11 @@ class StyleModel(unittest.TestCase):
         self.assertEqual(osty.from_dict(osty.to_dict(st)), st)           # ida y vuelta
 
 
+def jload(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def pixels(img: QImage, pred):
     return sum(1 for y in range(img.height()) for x in range(img.width()) if pred(img.pixelColor(x, y)))
 
@@ -96,7 +101,7 @@ class Visual(unittest.TestCase):
         self.assertEqual(w.ostyle.preset, "classic")         # el modo por defecto es historial
         w.set_style_field("outline", 5); w.apply_style_preset("neon"); w.set_style_field("trans_color", "#123456")
         w.close()
-        saved = json.load(open(self.cfg, encoding="utf-8"))["style"]
+        saved = jload(self.cfg)["style"]
         self.assertEqual((saved["preset"], saved["trans_color"]), ("custom", "#123456"))
         w2 = ov.TranslationOverlay(); self.addCleanup(w2.close)
         self.assertEqual(w2.ostyle.trans_color, "#123456")
@@ -124,7 +129,7 @@ class Visual(unittest.TestCase):
         self.assertEqual(w.ostyle.trans_color, "#ff0000")
         d.checks["shadow"].setChecked(False); d.checks["compact"].setChecked(True); d.sp_size.setValue(18); d.sl_alpha.setValue(200)
         self.assertEqual((w.ostyle.shadow, w.compact, w.font_size, w.bg_alpha), (False, True, 18, 200))
-        cfg = json.load(open(self.cfg, encoding="utf-8"))
+        cfg = jload(self.cfg)
         self.assertEqual((cfg["font_size"], cfg["opacity"], cfg["style"]["outline"]), (18, 200, 6))
 
     def test_templates_save_apply_delete(self):
@@ -132,12 +137,12 @@ class Visual(unittest.TestCase):
         d.sp_outline.setValue(7); d._set("trans_color", "#00ff00")
         with mock.patch.object(QInputDialog, "getText", return_value=("Mi estilo", True)):
             d._tpl_save()
-        self.assertIn("Mi estilo", json.load(open(self.cfg, encoding="utf-8"))["style_templates"])
+        self.assertIn("Mi estilo", jload(self.cfg)["style_templates"])
         w.apply_style_preset("minimal"); d.sync_from_style()
         d._tpl_apply()
         self.assertEqual((w.ostyle.outline, w.ostyle.trans_color), (7, "#00ff00"))
         d._tpl_delete()
-        self.assertEqual(json.load(open(self.cfg, encoding="utf-8"))["style_templates"], {})
+        self.assertEqual(jload(self.cfg)["style_templates"], {})
 
     def test_anchor_moves_window(self):
         w = self.make()
