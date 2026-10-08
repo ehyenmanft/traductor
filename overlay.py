@@ -127,6 +127,10 @@ class TranslationOverlay(QWidget):
         self.btn_style = _btn("🎨", "Personalizar estilo (fuente, colores, contorno, posición…)",
                               self.open_style_dialog)
 
+        self.btn_dub = _btn("🔇", "Doblaje de voz: apagado (F11)",
+                            lambda: self.dub_toggle_requested.emit())
+        self.set_dub_state(False)
+
         # Botón modo Gaming HUD Subtitle
         self.btn_gaming = _btn("🎮" if self.mode == "subtitle" else "💬",
                                "Alternar modo Gaming Subtítulo HUD (F6)",
@@ -292,6 +296,23 @@ class TranslationOverlay(QWidget):
             self.btn_gaming.setText("💬")
             self.btn_gaming.setToolTip("Modo actual: Historial Completo (F6 para modo Subtítulos Gaming)")
             self.btn_gaming.setStyleSheet(
+                "QPushButton{color:#c8d0dc;background:rgba(255,255,255,18);"
+                "border:none;border-radius:4px;font-size:11px;padding:2px 4px;}"
+                "QPushButton:hover{background:rgba(255,255,255,60);color:#ffffff;}")
+
+    def set_dub_state(self, on: bool):
+        """Refleja en el botón 🔊/🔇 si el doblaje de voz está activo."""
+        if on:
+            self.btn_dub.setText("🔊")
+            self.btn_dub.setToolTip("Doblaje de voz: ACTIVO (F11 para apagar)")
+            self.btn_dub.setStyleSheet(
+                "QPushButton{color:#7dffb2;background:rgba(0,220,120,45);"
+                "border:1px solid rgba(0,220,120,110);border-radius:4px;font-size:11px;padding:2px 4px;}"
+                "QPushButton:hover{background:rgba(0,220,120,90);color:#ffffff;}")
+        else:
+            self.btn_dub.setText("🔇")
+            self.btn_dub.setToolTip("Doblaje de voz: apagado (F11 para encender)")
+            self.btn_dub.setStyleSheet(
                 "QPushButton{color:#c8d0dc;background:rgba(255,255,255,18);"
                 "border:none;border-radius:4px;font-size:11px;padding:2px 4px;}"
                 "QPushButton:hover{background:rgba(255,255,255,60);color:#ffffff;}")

@@ -158,7 +158,7 @@ class LiveDubber:
     def __init__(self, target: str = "es", synth=None, player=None, gender: str = "female",
                  device: str = "", volume: float = 1.0, max_backlog: int = 2,
                  enabled: bool = False, on_gate=None, capture_device=None, on_notice=None,
-                 max_failures: int = 3):
+                 max_failures: int = 3, on_state=None):
         self.target = norm_lang(target)
         self.synth = synth or EdgeSynth()
         self.player = player or PyAudioPlayer()
@@ -171,6 +171,7 @@ class LiveDubber:
         self.capture_device = capture_device or (lambda: "")
         self.on_notice = on_notice or (lambda msg: None)
         self.max_failures = max_failures
+        self.on_state = on_state or (lambda on: None)    # avisa a la interfaz de cada cambio
         self._failures = 0
         self._q: deque[tuple[int, str]] = deque()
         self._cond = threading.Condition()
@@ -182,7 +183,10 @@ class LiveDubber:
     # ---------- ajustes ----------
 
     def set_enabled(self, on: bool):
+        changed = self.enabled != bool(on)
         self.enabled = bool(on)
+        if changed:
+            self.on_state(self.enabled)
         if not on:
             self.clear()
         else:

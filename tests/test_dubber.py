@@ -144,6 +144,17 @@ class Dubber(unittest.TestCase):
         self.assertTrue(wait_for(lambda: p.cancels, 1.5)); self.assertLess(time.time() - t0, 1.0)
         self.assertEqual(p.cancels, [True])                   # se cortó, no esperó 2 s
 
+    def test_on_state_reports_every_change_once(self):
+        states = []
+        d = self.make(enabled=False, on_state=states.append)
+        d.toggle(); d.toggle(); d.set_enabled(False)          # el último no cambia nada
+        self.assertEqual(states, [True, False])
+        d2 = self.make(synth=FakeSynth(fail=True), enabled=True, on_state=states.append, max_failures=2)
+        states.clear()
+        for i in range(2):
+            d2.submit(i, f"x{i}"); time.sleep(0.15)
+        self.assertTrue(wait_for(lambda: states == [False]))   # el apagado automático también avisa
+
     def test_repeated_failures_disable_with_notice(self):
         notes = []
         d = self.make(synth=FakeSynth(fail=True), enabled=True, on_notice=notes.append, max_failures=3)
@@ -165,6 +176,24 @@ class Wiring(unittest.TestCase):
         w.submit(1, "uno", "en", True); w.submit(2, "dos", "en", True)
         self.assertTrue(wait_for(lambda: len(got) == 2)); stop.set()
         self.assertEqual(got[0], (1, "T:uno", "uno", "en"))   # la 2.ª se procesó pese a la excepción de la 1.ª
+
+    def test_overlay_dub_button(self):
+        try:
+            from PyQt6.QtWidgets import QApplication
+            import overlay as ov
+        except Exception as e:      # pragma: no cover
+            self.skipTest(f"sin Qt: {e}")
+        global _APP
+        _APP = QApplication.instance() or QApplication(sys.argv)
+        with mock.patch.object(ov, "CONFIG_PATH", os.path.join(tempfile.mkdtemp(), "c.json")):
+            w = ov.TranslationOverlay(); self.addCleanup(w.close)
+            self.assertEqual(w.btn_dub.text(), "🔇"); self.assertIn("apagado", w.btn_dub.toolTip())
+            hits = []; w.dub_toggle_requested.connect(lambda: hits.append(1))
+            w.btn_dub.click(); self.assertEqual(hits, [1])             # el clic pide alternar
+            w.set_dub_state(True)
+            self.assertEqual(w.btn_dub.text(), "🔊"); self.assertIn("ACTIVO", w.btn_dub.toolTip())
+            self.assertIn("rgba(0,220,120", w.btn_dub.styleSheet())    # se ve en color
+            w.set_dub_state(False); self.assertEqual(w.btn_dub.text(), "🔇")
 
     def test_tray_menu_and_f11(self):
         try:

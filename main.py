@@ -89,6 +89,7 @@ class Bridge(QObject):
     set_trans = pyqtSignal(int, str)          # uid, traducción
     hotkey = pyqtSignal(str)                  # "f6".."f11" desde hook global
     notice = pyqtSignal(str)                  # avisos breves (doblaje, etc.)
+    dub_state = pyqtSignal(bool)              # el doblaje se encendió/apagó (también solo, por fallos)
 
 
 def setup_global_hotkeys(bridge: Bridge) -> bool:
@@ -355,15 +356,21 @@ def main():
         max_backlog=int(_cfg_value("dub_max_backlog", 2)),
         enabled=bool(_cfg_value("dub", False)),
         on_gate=capture.set_muted, capture_device=lambda: capture.current_device_name,
-        on_notice=bridge.notice.emit)
+        on_notice=bridge.notice.emit, on_state=bridge.dub_state.emit)
     overlay.language_changed.connect(dubber.set_target)
+    overlay.set_dub_state(dubber.enabled)
 
     tray = setup_system_tray(app, overlay, translator, dubber)
 
+    def _on_dub_state(on: bool):          # botón del overlay y casilla de la bandeja siempre al día
+        overlay.set_dub_state(on)
+        tray.sync_dub()
+        overlay.save_setting("dub", on)
+
+    bridge.dub_state.connect(_on_dub_state)
+
     def _toggle_dub():
         on = dubber.toggle()
-        overlay.save_setting("dub", on)
-        tray.sync_dub()
         overlay._flash("🔊 Doblaje de voz: ACTIVADO" if on else "🔇 Doblaje de voz: apagado")
 
     overlay.dub_toggle_requested.connect(_toggle_dub)

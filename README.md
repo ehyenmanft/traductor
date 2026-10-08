@@ -148,7 +148,7 @@ Pruebas: `python -m unittest discover tests` (no requieren Windows ni claves).
 - El modo HUD (F6) usa un visor propio con alto automático y frases completas; antes el contorno (`text-shadow`) no se dibujaba nunca porque Qt no lo soporta y la segunda frase salía recortada.
 
 **Doblaje de voz en vivo (F11)** — `live_dubber.py`
-- Lee en voz alta cada traducción final con voces neuronales (`edge-tts`, necesita internet). Activa/desactiva con **F11** o desde la bandeja (🔊 Doblaje de voz), donde también eliges voz (mujer/hombre) y dispositivo de salida.
+- Lee en voz alta cada traducción final con voces neuronales (`edge-tts`, necesita internet). Activa/desactiva con **F11**, con el botón **🔊/🔇** del overlay (verde = activo) o desde la bandeja (🔊 Doblaje de voz), donde también eliges voz (mujer/hombre) y dispositivo de salida.
 - **Anti-realimentación:** si la voz sale por el mismo dispositivo que se captura, la captura se silencia mientras habla (se pierde ese tramo del audio original). Para no perderlo, elige en la bandeja otra salida para la voz (por ejemplo unos audífonos distintos del dispositivo capturado).
 - Si se atrasa, descarta las frases más antiguas (`"dub_max_backlog"`, 2 por defecto) y acelera la voz hasta un 40 %. Tras 3 fallos seguidos (¿sin internet?) se desactiva solo y avisa.
 - Ajustes en `config.json`: `"dub"`, `"dub_gender"`, `"dub_device"`, `"dub_volume"`, `"dub_max_backlog"`.
