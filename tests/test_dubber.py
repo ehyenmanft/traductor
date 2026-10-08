@@ -1,4 +1,11 @@
 import os, queue, subprocess, sys, tempfile, threading, time, unittest
+
+# Este archivo prueba la app de escritorio: se omite en entornos que no la tienen (p. ej. el servidor del bot)
+for _mod in ("numpy",):
+    try:
+        __import__(_mod)
+    except ImportError:
+        raise unittest.SkipTest("sin %s (app de escritorio)" % _mod)
 from unittest import mock
 from unittest.mock import MagicMock
 
@@ -58,6 +65,10 @@ _APP = None
 
 class Audio(unittest.TestCase):
     def test_decode_real_mp3(self):
+        try:
+            import av  # noqa: F401
+        except ImportError:
+            self.skipTest('sin PyAV')
         d = tempfile.mkdtemp(); path = os.path.join(d, "t.mp3")
         subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=f=440:d=1", "-ar", "44100", "-q:a", "5", path],
                        check=True, capture_output=True)

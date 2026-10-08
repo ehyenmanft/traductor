@@ -1,0 +1,24 @@
+{
+  "deepgram_api_key": "TU_API_KEY_DEEPGRAM_AQUI",
+  "groq_api_key": "",
+  "opacity": 90,
+  "font_size": 13,
+  "compact": false,
+  "mode": "subtitle",
+  "target_lang": "es",
+  "width": 560,
+  "tone": "gamer",
+  "context_lines": 4,
+  "translate_partials": true,
+  "glossary": {
+    "gg": "gg",
+    "Black Mesa": "Black Mesa"
+  },
+  "keyterms": [],
+  "endpointing_ms": 300,
+  "dub": false,
+  "dub_gender": "female",
+  "dub_device": "",
+  "dub_volume": 1.0,
+  "dub_max_backlog": 2
+}

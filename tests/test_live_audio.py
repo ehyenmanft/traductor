@@ -1,5 +1,12 @@
 """Pruebas del audio en vivo: remuestreo, cierre de frases, Deepgram y overlay."""
 import json, os, queue, sys, tempfile, threading, time, unittest
+
+# Este archivo prueba la app de escritorio: se omite en entornos que no la tienen (p. ej. el servidor del bot)
+for _mod in ("numpy", "faster_whisper"):
+    try:
+        __import__(_mod)
+    except ImportError:
+        raise unittest.SkipTest("sin %s (app de escritorio)" % _mod)
 from unittest import mock
 from unittest.mock import MagicMock
 

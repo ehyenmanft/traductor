@@ -1,5 +1,12 @@
 """Integración: transcriptor simulado → pipeline → traductor → overlay + doblaje (señales Qt entre hilos)."""
 import os, queue, sys, tempfile, threading, time, unittest
+
+# Este archivo prueba la app de escritorio: se omite en entornos que no la tienen (p. ej. el servidor del bot)
+for _mod in ("numpy", "PyQt6", "faster_whisper"):
+    try:
+        __import__(_mod)
+    except ImportError:
+        raise unittest.SkipTest("sin %s (app de escritorio)" % _mod)
 from unittest import mock
 from unittest.mock import MagicMock
 
