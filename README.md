@@ -147,3 +147,12 @@ Las claves también pueden ir en `config.json` (ver `config.example.json`).
 **Límites:** la Bot API pública solo deja a los bots descargar videos de hasta **20 MB** y enviar hasta **50 MB** (el bot comprime el resultado para entrar). Para videos grandes, ejecuta un [servidor local de Bot API](https://github.com/tdlib/telegram-bot-api) y define `TELEGRAM_API_URL=http://localhost:8081`.
 
 Pruebas: `python -m unittest discover tests`
+
+### ☁️ Despliegue 24/7 en AWS (Ubuntu / Lightsail)
+
+```bash
+git clone -b <rama> https://github.com/ehyenmanft/traductor.git && cd traductor
+bash deploy/install.sh      # instala ffmpeg, dependencias, pide tus claves y crea el servicio systemd
+```
+
+El bot queda como servicio (`traductor-bot`): arranca con el servidor y se reinicia solo si falla. Logs: `journalctl -u traductor-bot -f`. Para actualizar: `bash deploy/update.sh`.
