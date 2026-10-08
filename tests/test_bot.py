@@ -140,6 +140,16 @@ class BotFlow(unittest.IsolatedAsyncioTestCase):
         await tb._start_job(update, self.ctx, fetch, "x")
         self.assertIn("máximo", status.edit_text.await_args.args[0])
 
+    async def test_low_disk_rejected(self):
+        update = MagicMock(); update.effective_user.id = 1
+        status = make_query("x").message
+        update.message.reply_text = AsyncMock(return_value=status)
+        fetch = AsyncMock()
+        with mock.patch.object(tb.shutil, "disk_usage", return_value=MagicMock(free=1000)):
+            await tb._start_job(update, self.ctx, fetch, "x")
+        self.assertIn("Poco espacio", status.edit_text.await_args.args[0])
+        fetch.assert_not_awaited()
+
     async def test_big_telegram_file_suggests_link(self):
         update = MagicMock(); update.effective_user.id = 1
         update.message.video.file_size = 80 * 1024 * 1024

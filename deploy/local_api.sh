@@ -48,6 +48,7 @@ sudo docker rm -f telegram-bot-api >/dev/null 2>&1 || true
 BIN="$(sudo docker run --rm --entrypoint sh "$IMG" -c 'command -v telegram-bot-api' || true)"
 BIN="${BIN:-/usr/local/bin/telegram-bot-api}"
 sudo docker run -d --name telegram-bot-api --restart always \
+  --log-opt max-size=10m --log-opt max-file=3 \
   --user "$(id -u):$(id -g)" --entrypoint "$BIN" -p 127.0.0.1:8081:8081 \
   -v "$DATA:$DATA" "$IMG" \
   --local --api-id="$API_ID" --api-hash="$API_HASH" \

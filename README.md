@@ -183,3 +183,10 @@ Telegram solo deja que un bot descargue archivos de hasta **20 MB**, y partir el
 2. **Servidor local de la Bot API** (`bash deploy/local_api.sh`, requiere `api_id`/`api_hash` de my.telegram.org): el bot recibe y envía videos de hasta ~2 GB directamente. Configura `telegram_api_url` en `config.json`.
 
 Mientras se procesa, el mensaje muestra una **barra con porcentaje y tiempo transcurrido** (`▰▰▰▰▱▱▱▱ 52%`), calculada con el avance real de ffmpeg, la traducción y el doblaje. Sin servidor local, el resultado se comprime para entrar en los 50 MB que permite subir Telegram.
+
+### 🧹 Limpieza de temporales
+
+- El bot borra la carpeta de trabajo de cada video al cancelar, al fallar y a las 2 h de terminar (`keep_minutes` en `config.json`; mientras tanto permite ✏️ editar y 🎨 repetir). Revisa cada 10 min.
+- Con el servidor local de Telegram, el video recibido se **mueve** (no se copia) a la carpeta del bot, y los `.srt` se borran tras leerse.
+- Red de seguridad: `deploy/cleanup.sh` corre por cron cada 30 min (`deploy/install_cleanup.sh`, lo instala `update.sh`) y borra descargas del servidor local de más de 60 min y carpetas `/tmp/trad_*` de más de 4 h, sin tocar el estado interno de Telegram.
+- Antes de aceptar un video comprueba que haya espacio en disco, y los logs de Docker rotan (3 × 10 MB).

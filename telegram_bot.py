@@ -58,7 +58,7 @@ CLOUD_DOWNLOAD_LIMIT = 20 * 1024 * 1024   # límite de getFile en la Bot API pú
 SEND_LIMIT_MB = 49                        # límite de subida de bots: 50 MB
 MAX_MINUTES = 90                          # duración máxima aceptada por video
 LINK_MAX_MB = 2000                        # tamaño máximo al descargar por enlace
-JOB_TTL = 2 * 3600                        # un video/menú sin usar caduca a las 2 h
+JOB_TTL = 2 * 3600                        # un video/menú sin usar caduca a las 2 h (config: keep_minutes)
 MAX_TEMPLATES = 8
 TEMPLATE_FIELDS = LOOK_FIELDS + ("size", "align_h", "align_v")
 _job_ids = itertools.count(1)
@@ -450,7 +450,15 @@ async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Estilo guardado reiniciado a los valores base.")
 
 
-async def _start_job(update: Update, ctx: ContextTypes.DEFAULT_TYPE, fetch, first_text: str):
+def _check_disk(need_bytes: int):
+    free = shutil.disk_usage(tempfile.gettempdir()).free
+    if free < need_bytes:
+        raise RuntimeError(f"Poco espacio en el servidor ({free / 1e9:.1f} GB libres, "
+                           f"necesito ~{need_bytes / 1e9:.1f} GB). Inténtalo en unos minutos.")
+
+
+async def _start_job(update: Update, ctx: ContextTypes.DEFAULT_TYPE, fetch, first_text: str,
+                     need_bytes: int = 2 * 1024 ** 3):
     """Crea el trabajo: obtiene el video (fetch), valida, saca un fotograma y
     muestra la vista previa con el menú. `fetch(workdir, status)` devuelve la ruta."""
     msg = update.message
@@ -459,6 +467,7 @@ async def _start_job(update: Update, ctx: ContextTypes.DEFAULT_TYPE, fetch, firs
     status = await msg.reply_text(first_text)
     workdir = tempfile.mkdtemp(prefix="trad_")
     try:
+        _check_disk(need_bytes)
         src = await fetch(workdir, status)
         info = await asyncio.to_thread(probe, src)
         max_min = ctx.application.bot_data["max_minutes"]
@@ -524,7 +533,8 @@ async def on_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 pass
         return src
 
-    await _start_job(update, ctx, fetch, "⏳ Descargando video y preparando vista previa…")
+    await _start_job(update, ctx, fetch, "⏳ Descargando video y preparando vista previa…",
+                     need_bytes=int((media.file_size or 0) * 4) + 1024 ** 3)
 
 
 async def on_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -542,7 +552,8 @@ async def on_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             download_url, url, workdir, lambda f: prog(100 * f, "⬇️ Descargando el enlace…"),
             LINK_MAX_MB, allow_private)
 
-    await _start_job(update, ctx, fetch, "🔗 Enlace recibido, descargando…")
+    await _start_job(update, ctx, fetch, "🔗 Enlace recibido, descargando…",
+                     need_bytes=3 * 1024 ** 3)
 
 
 async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -676,7 +687,13 @@ async def on_srt(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("Ese video se está procesando; espera un momento.")
         return
     try:
-        data = await (await ctx.bot.get_file(msg.document.file_id)).download_as_bytearray()
+        tg = await ctx.bot.get_file(msg.document.file_id)
+        data = await tg.download_as_bytearray()
+        if ctx.application.bot_data.get("local_api") and os.path.isabs(tg.file_path or ""):
+            try:
+                os.remove(tg.file_path)        # el servidor local no borra sus descargas
+            except OSError:
+                pass
         apply_edited_srt(job["tr"], bytes(data).decode("utf-8-sig", errors="replace"))
     except ValueError as e:
         await msg.reply_text(f"⚠️ {e}")
@@ -757,6 +774,8 @@ def build_app() -> Application:
     if not dg_key or dg_key.startswith("TU_API_KEY"):
         raise SystemExit("Falta DEEPGRAM_API_KEY.")
     api_url = _cfg("TELEGRAM_API_URL", "telegram_api_url")
+    global JOB_TTL
+    JOB_TTL = int(float(_cfg("KEEP_MINUTES", "keep_minutes", str(JOB_TTL // 60)) or 120) * 60)
 
     # estilo, plantillas y glosario de cada usuario sobreviven a los reinicios
     persistence = PicklePersistence(

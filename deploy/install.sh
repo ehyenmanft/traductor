@@ -20,6 +20,7 @@ sudo apt-get install -y ffmpeg python3 python3-venv python3-pip git \
     fonts-liberation fonts-dejavu-core fonts-noto-cjk fontconfig
 
 bash deploy/fonts.sh
+bash deploy/install_cleanup.sh
 echo "==> Creando entorno virtual e instalando dependencias..."
 python3 -m venv .venv-bot
 .venv-bot/bin/pip install -q --upgrade pip
