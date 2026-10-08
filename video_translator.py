@@ -2,7 +2,7 @@
 Pipeline de traducción de videos (sin GUI, sin Telegram):
 
     video ──ffmpeg──► audio ──Deepgram nova-3 (multi, detecta idioma)──► segmentos
-          ──Translator (Groq / Google)──► segmentos traducidos
+          ──Traducción (Groq → Google → MyMemory)──► segmentos traducidos
           ──► subtítulos .ass ──ffmpeg──► video original + subtítulos incrustados
 
 El video y el audio originales se conservan íntegros: el audio se copia sin
@@ -14,8 +14,9 @@ import json
 import os
 import re
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import requests
 
@@ -31,7 +32,99 @@ LANGUAGES = {
     "de": "Deutsch", "it": "Italiano", "ja": "日本語", "ko": "한국어",
     "zh-cn": "中文", "ru": "Русский",
 }
+_GOOGLE = {"zh-cn": "zh-CN"}
+_MYMEMORY = {"es": "es-ES", "en": "en-US", "pt": "pt-PT", "fr": "fr-FR",
+             "de": "de-DE", "it": "it-IT", "ja": "ja-JP", "ko": "ko-KR",
+             "zh-cn": "zh-CN", "ru": "ru-RU"}
 
+
+# --------------------------------------------------------------------------
+# Estilo
+# --------------------------------------------------------------------------
+
+@dataclass
+class SubtitleStyle:
+    """Todas las opciones que el usuario puede elegir desde Telegram."""
+    font: str = "sans"            # clave de FONTS
+    color: str = "white"          # clave de COLORS
+    outline: str = "med"          # none | thin | med | thick | xthick
+    outline_color: str = "black"  # clave de COLORS (también es el color de la caja)
+    bg: str = "none"              # none | soft | solid  (caja tras el texto)
+    shadow: bool = True
+    bold: bool = True
+    italic: bool = False
+    upper: bool = False
+    align_h: str = "center"       # left | center | right
+    align_v: str = "bottom"       # top | middle | bottom
+    size: str = "m"               # xs | s | m | l | xl  (relativo al alto)
+    bilingual: bool = False       # texto original, más chico, bajo la traducción
+    target: str = "es"
+    preset: str = "classic"       # solo informativo (último preset aplicado)
+
+
+# Colores ASS: &HAABBGGRR
+COLORS = {
+    "white": ("Blanco", "&H00FFFFFF"), "yellow": ("Amarillo", "&H0000E0FF"),
+    "cyan": ("Cian", "&H00FFFF00"), "green": ("Verde", "&H0000FF40"),
+    "orange": ("Naranja", "&H000080FF"), "pink": ("Rosa", "&H00C080FF"),
+    "red": ("Rojo", "&H000000FF"), "blue": ("Azul", "&H00FF3000"),
+    "purple": ("Morado", "&H00A00080"), "black": ("Negro", "&H00000000"),
+}
+# (etiqueta, nombre de fuente instalada). Si falta, fontconfig usa otra similar.
+FONTS = {
+    "sans": ("Sans", "Liberation Sans"), "serif": ("Serif", "Liberation Serif"),
+    "mono": ("Mono", "DejaVu Sans Mono"), "roboto": ("Roboto", "Roboto"),
+    "impact": ("Impacto", "Anton"),
+}
+OUTLINES = {"none": ("Sin contorno", 0.0), "thin": ("Fino", 0.04),
+            "med": ("Medio", 0.07), "thick": ("Grueso", 0.11),
+            "xthick": ("Extra", 0.15)}
+BGS = {"none": ("Sin fondo", None), "soft": ("Caja suave", "&H70"),
+       "solid": ("Caja sólida", "&H00")}
+SIZES = {"xs": ("XS", 0.032), "s": ("S", 0.042), "m": ("M", 0.055),
+         "l": ("L", 0.072), "xl": ("XL", 0.095)}
+ALIGN = {("bottom", "left"): 1, ("bottom", "center"): 2, ("bottom", "right"): 3,
+         ("middle", "left"): 4, ("middle", "center"): 5, ("middle", "right"): 6,
+         ("top", "left"): 7, ("top", "center"): 8, ("top", "right"): 9}
+
+# Estilos listos: cada uno es un paquete de campos de SubtitleStyle.
+PRESETS = {
+    "classic": dict(label="Clásico", font="sans", color="white", outline="med",
+                    outline_color="black", bg="none", shadow=True, bold=True,
+                    italic=False, upper=False),
+    "yellow": dict(label="Cine amarillo", font="sans", color="yellow",
+                   outline="med", outline_color="black", bg="none",
+                   shadow=True, bold=True, italic=False, upper=False),
+    "box": dict(label="Caja oscura", font="roboto", color="white",
+                outline="med", outline_color="black", bg="soft", shadow=False,
+                bold=False, italic=False, upper=False),
+    "gamer": dict(label="Gamer neón", font="impact", color="cyan",
+                  outline="thick", outline_color="purple", bg="none",
+                  shadow=True, bold=False, italic=False, upper=True),
+    "comic": dict(label="Cómic", font="impact", color="yellow",
+                  outline="xthick", outline_color="black", bg="none",
+                  shadow=True, bold=False, italic=False, upper=True),
+    "elegant": dict(label="Elegante", font="serif", color="white",
+                    outline="thin", outline_color="black", bg="none",
+                    shadow=True, bold=False, italic=True, upper=False),
+    "retro": dict(label="Retro terminal", font="mono", color="green",
+                  outline="med", outline_color="black", bg="solid",
+                  shadow=False, bold=True, italic=False, upper=False),
+    "minimal": dict(label="Minimal", font="sans", color="white",
+                    outline="thin", outline_color="black", bg="none",
+                    shadow=False, bold=False, italic=False, upper=False),
+}
+
+
+def apply_preset(style: SubtitleStyle, name: str) -> SubtitleStyle:
+    """Aplica un estilo listo conservando posición, tamaño e idioma."""
+    p = {k: v for k, v in PRESETS[name].items() if k != "label"}
+    return replace(style, preset=name, **p)
+
+
+# --------------------------------------------------------------------------
+# Datos
+# --------------------------------------------------------------------------
 
 @dataclass
 class Segment:
@@ -42,36 +135,12 @@ class Segment:
     translation: str = ""
 
 
-@dataclass
-class SubtitleStyle:
-    """Opciones de estilo que el usuario elige desde Telegram."""
-    preset: str = "classic"      # ver PRESETS
-    position: str = "bottom"     # bottom | middle | top
-    size: str = "m"              # s | m | l  (relativo al alto del video)
-    bilingual: bool = False      # mostrar también el texto original (más chico)
-    target: str = "es"
+class SameLanguageError(Exception):
+    """Todo el habla ya está en el idioma destino: no hay nada que traducir."""
 
-
-# Colores ASS: &HAABBGGRR (alpha 00 = opaco)
-PRESETS = {
-    "classic": dict(label="Clásico", font="Arial", primary="&H00FFFFFF",
-                    outline="&H00000000", back="&H80000000", bold=1,
-                    border=1, outline_w=0.07, shadow=0.03),
-    "yellow": dict(label="Cine amarillo", font="Arial", primary="&H0000E0FF",
-                   outline="&H00000000", back="&H80000000", bold=1,
-                   border=1, outline_w=0.08, shadow=0.03),
-    "box": dict(label="Caja oscura", font="Arial", primary="&H00FFFFFF",
-                outline="&HB0000000", back="&HB0000000", bold=0,
-                border=3, outline_w=0.18, shadow=0),
-    "gamer": dict(label="Gamer neón", font="Impact", primary="&H00FFFF00",
-                  outline="&H00800080", back="&H80000000", bold=0,
-                  border=1, outline_w=0.10, shadow=0.05),
-    "minimal": dict(label="Minimal", font="Arial", primary="&H00FFFFFF",
-                    outline="&H40000000", back="&H00000000", bold=0,
-                    border=1, outline_w=0.04, shadow=0),
-}
-SIZES = {"s": 0.040, "m": 0.055, "l": 0.075}            # fracción del alto
-ALIGN = {"bottom": 2, "middle": 5, "top": 8}            # numpad ASS
+    def __init__(self, langs: list[str]):
+        super().__init__("same language")
+        self.langs = langs
 
 
 # --------------------------------------------------------------------------
@@ -83,6 +152,13 @@ def _run(cmd: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
     if res.returncode != 0:
         raise RuntimeError(f"{cmd[0]} falló: {res.stderr[-800:]}")
     return res
+
+
+def _num(v) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def probe(video: str) -> dict:
@@ -102,7 +178,7 @@ def probe(video: str) -> dict:
     rot = rot or abs(int(vs.get("tags", {}).get("rotate", 0)))
     if rot in (90, 270):
         w, h = h, w
-    dur = float(info["format"].get("duration") or vs.get("duration") or 0)
+    dur = _num(info["format"].get("duration")) or _num(vs.get("duration"))
     has_audio = any(s["codec_type"] == "audio" for s in info["streams"])
     return dict(width=w, height=h, duration=dur, has_audio=has_audio)
 
@@ -111,6 +187,15 @@ def extract_audio(video: str, out_path: str) -> str:
     """Audio mono 16 kHz en FLAC (liviano y sin pérdida para el ASR)."""
     _run(["ffmpeg", "-y", "-i", video, "-vn", "-ac", "1", "-ar", "16000",
           "-c:a", "flac", out_path])
+    return out_path
+
+
+def extract_frame(video: str, out_path: str, duration: float,
+                  width: int = 720) -> str:
+    """Un fotograma del video (reducido) para las vistas previas del menú."""
+    t = max(0.0, min(duration * 0.3, duration - 0.1)) if duration else 0.0
+    _run(["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", video, "-frames:v", "1",
+          "-vf", f"scale='min({width},iw)':-2", "-q:v", "3", out_path])
     return out_path
 
 
@@ -180,7 +265,7 @@ def segments_from_deepgram(data: dict) -> list[Segment]:
 
 
 # --------------------------------------------------------------------------
-# Traducción
+# Traducción (con respaldos y errores visibles)
 # --------------------------------------------------------------------------
 
 def _norm_lang(code: str) -> str:
@@ -190,17 +275,62 @@ def _norm_lang(code: str) -> str:
     return code.split("-")[0] if code != "auto" else code
 
 
+def _google(text: str, src: str, target: str) -> str:
+    from deep_translator import GoogleTranslator
+    return GoogleTranslator(source="auto",
+                            target=_GOOGLE.get(target, target)).translate(text)
+
+
+def _mymemory(text: str, src: str, target: str) -> str:
+    from deep_translator import MyMemoryTranslator
+    if src not in _MYMEMORY:
+        raise RuntimeError("MyMemory necesita idioma de origen conocido")
+    return MyMemoryTranslator(source=_MYMEMORY[src],
+                              target=_MYMEMORY[target]).translate(text)
+
+
+def _bad(result: str | None, original: str) -> bool:
+    r = (result or "").strip().lower()
+    return (not r or "<html" in r or "error 500" in r or "server error" in r
+            or "mymemory warning" in r or "query length limit" in r)
+
+
 def translate_segments(segs: list[Segment], target: str,
-                       groq_api_key: str | None = None) -> list[Segment]:
+                       groq_api_key: str | None = None) -> list[str]:
+    """Traduce cada segmento. Devuelve la lista de problemas encontrados
+    (vacía si todo salió bien). Cadena: Groq → Google → MyMemory."""
     tr = Translator(target_language=target, groq_api_key=groq_api_key)
+    errors: list[str] = []
+    cache: dict[tuple[str, str], str] = {}
 
     def one(s: Segment) -> str:
-        return tr.translate(s.text, _norm_lang(s.lang))
+        src = _norm_lang(s.lang)
+        if src == target:
+            return s.text                      # ya está en el idioma destino
+        if (src, s.text) in cache:
+            return cache[(src, s.text)]
+        engines = []
+        if tr.groq_key:
+            engines.append(("Groq", lambda: tr._translate_groq(s.text, src, target)))
+        engines += [("Google", lambda: _google(s.text, src, target)),
+                    ("MyMemory", lambda: _mymemory(s.text, src, target))]
+        for name, fn in engines:
+            for attempt in range(2):
+                try:
+                    out = fn()
+                    if not _bad(out, s.text):
+                        cache[(src, s.text)] = out
+                        return out
+                    errors.append(f"{name}: respuesta vacía/inválida")
+                except Exception as e:  # noqa: BLE001
+                    errors.append(f"{name}: {type(e).__name__}: {str(e)[:120]}")
+                time.sleep(0.4 * (attempt + 1))
+        return ""                              # sin traducir
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         for s, t in zip(segs, pool.map(one, segs)):
             s.translation = t
-    return segs
+    return errors
 
 
 def detected_languages(segs: list[Segment]) -> list[str]:
@@ -208,7 +338,7 @@ def detected_languages(segs: list[Segment]) -> list[str]:
     count: dict[str, int] = {}
     for s in segs:
         if s.lang != "auto":
-            count[s.lang] = count.get(s.lang, 0) + len(s.text)
+            count[_norm_lang(s.lang)] = count.get(_norm_lang(s.lang), 0) + len(s.text)
     return sorted(count, key=count.get, reverse=True)
 
 
@@ -244,15 +374,26 @@ def _fix_timing(segs: list[Segment], duration: float) -> list[Segment]:
     return out
 
 
-def build_ass(segs: list[Segment], style: SubtitleStyle,
+def build_ass(segs: list[Segment], st: SubtitleStyle,
               width: int, height: int, duration: float = 0.0) -> str:
-    p = PRESETS.get(style.preset, PRESETS["classic"])
-    fs = max(14, round(height * SIZES.get(style.size, SIZES["m"])))
-    outline = round(fs * p["outline_w"], 1)
-    shadow = round(fs * p["shadow"], 1)
+    fs = max(12, round(height * SIZES.get(st.size, SIZES["m"])[1]))
+    font = FONTS.get(st.font, FONTS["sans"])[1]
+    primary = COLORS.get(st.color, COLORS["white"])[1]
+    ocol = COLORS.get(st.outline_color, COLORS["black"])[1]
+    box_alpha = BGS.get(st.bg, BGS["none"])[1]
+    if box_alpha:
+        # BorderStyle 3: la "caja" usa OutlineColour; Outline es el relleno
+        border, outline = 3, round(fs * 0.22, 1)
+        ocol = box_alpha + ocol[3:]
+        shadow = 0
+    else:
+        border = 1
+        outline = round(fs * OUTLINES.get(st.outline, OUTLINES["med"])[1], 1)
+        shadow = round(fs * 0.05, 1) if st.shadow else 0
+    back = "&H80000000" if st.shadow else "&HFF000000"
     margin_v = round(height * 0.05)
     margin_h = round(width * 0.05)
-    align = ALIGN.get(style.position, 2)
+    align = ALIGN.get((st.align_v, st.align_h), 2)
     head = (
         "[Script Info]\nScriptType: v4.00+\nWrapStyle: 0\n"
         f"PlayResX: {width}\nPlayResY: {height}\nScaledBorderAndShadow: yes\n\n"
@@ -261,9 +402,9 @@ def build_ass(segs: list[Segment], style: SubtitleStyle,
         "OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,"
         "ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,"
         "MarginR,MarginV,Encoding\n"
-        f"Style: Default,{p['font']},{fs},{p['primary']},&H000000FF,"
-        f"{p['outline']},{p['back']},{p['bold']},0,0,0,100,100,0,0,"
-        f"{p['border']},{outline},{shadow},{align},{margin_h},{margin_h},"
+        f"Style: Default,{font},{fs},{primary},&H000000FF,{ocol},{back},"
+        f"{-1 if st.bold else 0},{-1 if st.italic else 0},0,0,100,100,0,0,"
+        f"{border},{outline},{shadow},{align},{margin_h},{margin_h},"
         f"{margin_v},1\n\n"
         "[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,"
         "MarginV,Effect,Text\n"
@@ -271,13 +412,16 @@ def build_ass(segs: list[Segment], style: SubtitleStyle,
     lines = []
     for s in _fix_timing([Segment(x.start, x.end, x.text, x.lang, x.translation)
                           for x in segs], duration):
-        txt = _esc(s.translation or s.text)
-        same = _norm_lang(s.lang) == style.target or txt.strip() == s.text.strip()
-        if style.bilingual and not same:
-            small = max(10, round(fs * 0.62))
-            txt += f"\\N{{\\fs{small}\\b0\\alpha&H30&}}{_esc(s.text)}"
+        main = _esc(s.translation or s.text)
+        if st.upper:
+            main = main.upper()
+        same = _norm_lang(s.lang) == st.target or main.strip().lower() == s.text.strip().lower()
+        if st.bilingual and not same:
+            small = max(9, round(fs * 0.62))
+            orig = _esc(s.text).upper() if st.upper else _esc(s.text)
+            main += f"\\N{{\\fs{small}\\b0\\alpha&H30&}}{orig}"
         lines.append(f"Dialogue: 0,{_ts_ass(s.start)},{_ts_ass(s.end)},"
-                     f"Default,,0,0,0,,{txt}")
+                     f"Default,,0,0,0,,{main}")
     return head + "\n".join(lines) + "\n"
 
 
@@ -289,6 +433,35 @@ def build_srt(segs: list[Segment]) -> str:
         out.append(f"{i}\n{_ts_srt(s.start)} --> {_ts_srt(s.end)}\n"
                    f"{s.translation or s.text}\n")
     return "\n".join(out)
+
+
+# --------------------------------------------------------------------------
+# Vista previa (imagen con el estilo elegido sobre un fotograma real)
+# --------------------------------------------------------------------------
+
+SAMPLES = {
+    "es": "Así se verán tus subtítulos", "en": "This is how your subtitles look",
+    "pt": "Assim ficarão suas legendas", "fr": "Voici vos sous-titres",
+    "de": "So sehen Ihre Untertitel aus", "it": "Ecco come saranno i sottotitoli",
+    "ja": "字幕はこのように表示されます", "ko": "자막이 이렇게 표시됩니다",
+    "zh-cn": "字幕将这样显示", "ru": "Так будут выглядеть субтитры",
+}
+
+
+def render_preview(frame: str, st: SubtitleStyle, out_path: str,
+                   workdir: str) -> str:
+    """Pinta subtítulos de ejemplo sobre un fotograma con el estilo actual."""
+    info = _run(["ffprobe", "-v", "error", "-print_format", "json",
+                 "-show_streams", frame]).stdout
+    vs = json.loads(info)["streams"][0]
+    w, h = int(vs["width"]), int(vs["height"])
+    orig_lang = "en" if st.target != "en" else "es"
+    seg = Segment(0, 5, SAMPLES[orig_lang], orig_lang, SAMPLES.get(st.target, SAMPLES["en"]))
+    with open(os.path.join(workdir, "prev.ass"), "w", encoding="utf-8") as f:
+        f.write(build_ass([seg], st, w, h, 5))
+    _run(["ffmpeg", "-y", "-i", os.path.abspath(frame), "-vf", "subtitles=prev.ass",
+          "-frames:v", "1", "-q:v", "3", os.path.abspath(out_path)], cwd=workdir)
+    return out_path
 
 
 # --------------------------------------------------------------------------
@@ -334,8 +507,14 @@ def burn_subtitles(video: str, ass_text: str, out_path: str, workdir: str,
 
 
 # --------------------------------------------------------------------------
-# Orquestación
+# Orquestación (en dos fases para poder cambiar de idioma sin re-transcribir)
 # --------------------------------------------------------------------------
+
+@dataclass
+class Transcription:
+    segments: list[Segment]
+    info: dict
+
 
 @dataclass
 class Result:
@@ -343,12 +522,11 @@ class Result:
     srt_text: str
     languages: list[str] = field(default_factory=list)
     n_segments: int = 0
+    warnings: list[str] = field(default_factory=list)
 
 
-def process_video(video: str, style: SubtitleStyle, workdir: str,
-                  deepgram_key: str, groq_key: str | None = None,
-                  max_mb: float | None = None,
-                  progress=lambda msg: None) -> Result:
+def transcribe_video(video: str, workdir: str, deepgram_key: str,
+                     progress=lambda msg: None) -> Transcription:
     info = probe(video)
     if not info["has_audio"]:
         raise RuntimeError("El video no tiene pista de audio para transcribir.")
@@ -358,10 +536,30 @@ def process_video(video: str, style: SubtitleStyle, workdir: str,
     segs = transcribe_file(audio, deepgram_key)
     if not segs:
         raise RuntimeError("No se detectó habla en el video.")
-    progress(f"🌐 Traduciendo {len(segs)} subtítulos…")
-    translate_segments(segs, style.target, groq_key)
+    return Transcription(segs, info)
+
+
+def render_video(video: str, tr: Transcription, st: SubtitleStyle, workdir: str,
+                 groq_key: str | None = None, max_mb: float | None = None,
+                 progress=lambda msg: None) -> Result:
+    langs = detected_languages(tr.segments)
+    if langs and all(l == st.target for l in langs):
+        raise SameLanguageError(langs)
+    progress(f"🌐 Traduciendo {len(tr.segments)} subtítulos…")
+    errors = translate_segments(tr.segments, st.target, groq_key)
+    failed = [s for s in tr.segments if not s.translation]
+    warnings: list[str] = []
+    if len(failed) == len(tr.segments):
+        raise RuntimeError(
+            "No se pudo traducir con ningún motor (Groq/Google/MyMemory). "
+            "Último error: " + (errors[-1] if errors else "desconocido") +
+            ". Agrega una groq_api_key gratuita en config.json.")
+    if failed:
+        warnings.append(f"{len(failed)} de {len(tr.segments)} subtítulos no se "
+                        "pudieron traducir y quedaron en el idioma original.")
     progress("🎬 Incrustando subtítulos en el video…")
-    ass = build_ass(segs, style, info["width"], info["height"], info["duration"])
+    ass = build_ass(tr.segments, st, tr.info["width"], tr.info["height"],
+                    tr.info["duration"])
     out = burn_subtitles(video, ass, os.path.join(workdir, "traducido.mp4"),
-                         workdir, info["duration"], max_mb)
-    return Result(out, build_srt(segs), detected_languages(segs), len(segs))
+                         workdir, tr.info["duration"], max_mb)
+    return Result(out, build_srt(tr.segments), langs, len(tr.segments), warnings)
