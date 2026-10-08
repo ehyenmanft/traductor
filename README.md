@@ -156,3 +156,21 @@ bash deploy/install.sh      # instala ffmpeg, dependencias, pide tus claves y cr
 ```
 
 El bot queda como servicio (`traductor-bot`): arranca con el servidor y se reinicia solo si falla. Logs: `journalctl -u traductor-bot -f`. Para actualizar: `bash deploy/update.sh`.
+
+### 🎛️ Personalización estilo CapCut / Captions
+
+| Categoría | Opciones |
+|---|---|
+| **Estilos listos** | Clásico, Cine amarillo, Caja oscura, Gamer neón, Cómic, Elegante, Retro, Minimal, 🔥 Hormozi, ⚡ Beast, 🎤 Karaoke, ⌨️ Tecleo, 💡 Neón |
+| **Aspecto** | 5 fuentes, 10 colores, contorno (5 grosores y color), caja suave/sólida, sombra, negrita, cursiva, MAYÚSCULAS, espaciado, tamaño XS–XL |
+| **Posición** | cuadrícula 5×5 (incluye puntos intermedios) |
+| **Karaoke** | palabra activa en color / con pop / relleno progresivo; 1, 2, 3 o 5 palabras por pantalla |
+| **Animación** | fundido, pop, rebote, máquina de escribir |
+| **Efectos** | neón, palabras clave en color, barra de progreso, censura de groserías |
+| **Traducción** | 10 idiomas o solo transcribir, tono (natural/formal/casual/gamer/técnico/humor), glosario (`/glosario hola=hello`, `/conservar Nombre`), texto original debajo |
+| **Doblaje** | voz IA (mujer/hombre) con el audio original mantenido, bajo o silenciado |
+| **Flujo** | vista previa en vivo, ⭐ plantillas propias, ✏️ editar el texto (.srt) y 🎨 repetir con otro estilo sin volver a transcribir |
+
+El tono, el contexto y el glosario completo los aplica Groq (`groq_api_key`); sin Groq se usa Google/MyMemory con protección de los términos del glosario. El doblaje usa `edge-tts` (internet) y, si falla, el video sale igual sin doblaje.
+
+No incluido: sincronía de labios, avatares IA, emojis a color animados ni música/transiciones.
