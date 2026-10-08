@@ -24,6 +24,8 @@ class T(unittest.TestCase):
         ass = vt.build_ass(segs, st, 1280, 720, 10)
         self.assertIn("HOLA A TODOS\\N", ass)
         self.assertIn(",9,", ass)                 # alineación arriba-derecha
+        lo = vt.build_ass(segs, vt.SubtitleStyle(align_v="lower", align_h="leftmid"), 1000, 800)
+        self.assertIn(",2,50,400,200,1", lo)      # centrado, márgenes 5 %/40 %, 25 % vertical
         self.assertIn("PlayResY: 720", ass)
         box = vt.build_ass(segs, vt.apply_preset(vt.SubtitleStyle(), "box"), 640, 360)
         self.assertIn(",3,", box)                 # BorderStyle caja

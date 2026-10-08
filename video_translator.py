@@ -54,8 +54,8 @@ class SubtitleStyle:
     bold: bool = True
     italic: bool = False
     upper: bool = False
-    align_h: str = "center"       # left | center | right
-    align_v: str = "bottom"       # top | middle | bottom
+    align_h: str = "center"       # left | leftmid | center | rightmid | right
+    align_v: str = "bottom"       # top | upper | middle | lower | bottom
     size: str = "m"               # xs | s | m | l | xl  (relativo al alto)
     bilingual: bool = False       # texto original, más chico, bajo la traducción
     target: str = "es"
@@ -83,9 +83,26 @@ BGS = {"none": ("Sin fondo", None), "soft": ("Caja suave", "&H70"),
        "solid": ("Caja sólida", "&H00")}
 SIZES = {"xs": ("XS", 0.032), "s": ("S", 0.042), "m": ("M", 0.055),
          "l": ("L", 0.072), "xl": ("XL", 0.095)}
-ALIGN = {("bottom", "left"): 1, ("bottom", "center"): 2, ("bottom", "right"): 3,
-         ("middle", "left"): 4, ("middle", "center"): 5, ("middle", "right"): 6,
-         ("top", "left"): 7, ("top", "center"): 8, ("top", "right"): 9}
+VPOS = ("top", "upper", "middle", "lower", "bottom")        # 5 filas
+HPOS = ("left", "leftmid", "center", "rightmid", "right")   # 5 columnas
+ALIGN = {(v, h): None for v in VPOS for h in HPOS}          # posiciones válidas
+
+
+def _layout(st: "SubtitleStyle", width: int, height: int) -> tuple[int, int, int, int]:
+    """(alineación ASS, margen izq, margen der, margen vertical) para la
+    posición elegida. Las intermedias se logran moviendo los márgenes."""
+    mh, mv = round(width * 0.05), round(height * 0.05)
+    row = {"top": 7, "upper": 7, "middle": 4, "lower": 1, "bottom": 1}[st.align_v]
+    col = {"left": 0, "leftmid": 1, "center": 1, "rightmid": 1, "right": 2}[st.align_h]
+    ml, mr = mh, mh
+    if st.align_h == "leftmid":
+        mr = round(width * 0.40)      # región 5–60 % → texto centrado a ~32 %
+    elif st.align_h == "rightmid":
+        ml = round(width * 0.40)      # región 40–95 % → texto centrado a ~68 %
+    if st.align_v in ("upper", "lower"):
+        mv = round(height * 0.25)     # a medio camino entre el borde y el centro
+    return row + col, ml, mr, mv
+
 
 # Estilos listos: cada uno es un paquete de campos de SubtitleStyle.
 PRESETS = {
@@ -391,9 +408,7 @@ def build_ass(segs: list[Segment], st: SubtitleStyle,
         outline = round(fs * OUTLINES.get(st.outline, OUTLINES["med"])[1], 1)
         shadow = round(fs * 0.05, 1) if st.shadow else 0
     back = "&H80000000" if st.shadow else "&HFF000000"
-    margin_v = round(height * 0.05)
-    margin_h = round(width * 0.05)
-    align = ALIGN.get((st.align_v, st.align_h), 2)
+    align, margin_l, margin_r, margin_v = _layout(st, width, height)
     head = (
         "[Script Info]\nScriptType: v4.00+\nWrapStyle: 0\n"
         f"PlayResX: {width}\nPlayResY: {height}\nScaledBorderAndShadow: yes\n\n"
@@ -404,7 +419,7 @@ def build_ass(segs: list[Segment], st: SubtitleStyle,
         "MarginR,MarginV,Encoding\n"
         f"Style: Default,{font},{fs},{primary},&H000000FF,{ocol},{back},"
         f"{-1 if st.bold else 0},{-1 if st.italic else 0},0,0,100,100,0,0,"
-        f"{border},{outline},{shadow},{align},{margin_h},{margin_h},"
+        f"{border},{outline},{shadow},{align},{margin_l},{margin_r},"
         f"{margin_v},1\n\n"
         "[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,"
         "MarginV,Effect,Text\n"

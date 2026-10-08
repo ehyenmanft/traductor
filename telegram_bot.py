@@ -37,7 +37,7 @@ from telegram.error import BadRequest
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
-from video_translator import (ALIGN, BGS, COLORS, FONTS, LANGUAGES, OUTLINES,
+from video_translator import (ALIGN, BGS, HPOS, VPOS, COLORS, FONTS, LANGUAGES, OUTLINES,
                               PRESETS, SIZES, SameLanguageError, SubtitleStyle,
                               apply_preset, extract_frame, probe,
                               render_preview, render_video, transcribe_video)
@@ -85,10 +85,6 @@ def allowed_users() -> set[int | str]:
 COLOR_EMOJI = {"white": "⚪", "yellow": "🟡", "cyan": "🔵", "green": "🟢",
                "orange": "🟠", "pink": "🩷", "red": "🔴", "blue": "🔷",
                "purple": "🟣", "black": "⚫"}
-POS_LABEL = {("top", "left"): "↖️", ("top", "center"): "⬆️", ("top", "right"): "↗️",
-             ("middle", "left"): "⬅️", ("middle", "center"): "⏺",
-             ("middle", "right"): "➡️", ("bottom", "left"): "↙️",
-             ("bottom", "center"): "⬇️", ("bottom", "right"): "↘️"}
 PAGES = {"font": "🔤 Fuente", "color": "🎨 Color", "outline": "✏️ Contorno y fondo",
          "pos": "📍 Posición", "size": "🔠 Tamaño", "extras": "⚙️ Extras",
          "lang": "🌐 Idioma"}
@@ -130,11 +126,11 @@ def keyboard(job_id: int, st: SubtitleStyle, page: str = "main") -> InlineKeyboa
         rows += header("Fondo (con caja no hay contorno)")
         rows.append([opt(l, "bg", k, st.bg == k) for k, (l, _) in BGS.items()])
     elif page == "pos":
-        rows += header("Posición en pantalla")
-        for v in ("top", "middle", "bottom"):
-            rows.append([opt(POS_LABEL[(v, h)], "pos", f"{v}-{h}",
-                             (st.align_v, st.align_h) == (v, h))
-                         for h in ("left", "center", "right")])
+        rows += header("Posición en pantalla (cuadrícula del video)")
+        for v in VPOS:
+            rows.append([opt("🟩" if (st.align_v, st.align_h) == (v, h) else "⬜",
+                             "pos", f"{v}-{h}")
+                         for h in HPOS])
     elif page == "size":
         rows.append([opt(l, "size", k, st.size == k) for k, (l, _) in SIZES.items()])
     elif page == "extras":
@@ -158,8 +154,10 @@ def keyboard(job_id: int, st: SubtitleStyle, page: str = "main") -> InlineKeyboa
 
 
 def menu_text(st: SubtitleStyle, note: str = "") -> str:
-    pos = {"top": "arriba", "middle": "centro", "bottom": "abajo"}[st.align_v]
-    hor = {"left": "izquierda", "center": "centrado", "right": "derecha"}[st.align_h]
+    pos = {"top": "arriba", "upper": "arriba-centro", "middle": "centro",
+           "lower": "centro-abajo", "bottom": "abajo"}[st.align_v]
+    hor = {"left": "izquierda", "leftmid": "izq.-centro", "center": "centrado",
+           "rightmid": "centro-der.", "right": "derecha"}[st.align_h]
     extras = [x for x, on in (("negrita", st.bold), ("cursiva", st.italic),
                               ("mayúsculas", st.upper), ("sombra", st.shadow),
                               ("con texto original", st.bilingual)) if on]
