@@ -153,7 +153,7 @@ async def on_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         file_id=media.file_id, style=st, user=update.effective_user.id,
         name=getattr(media, "file_name", None) or "video.mp4", busy=False)
     await msg.reply_text(menu_text(st), parse_mode="Markdown",
-                         reply_markup=keyboard(job_id, st), quote=True)
+                         reply_markup=keyboard(job_id, st))
 
 
 async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
