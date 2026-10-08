@@ -9,6 +9,8 @@ Traductor de voz en tiempo real con **overlay translúcido estilo HUD / Cine** o
 
 📘 **Novedades de la app de escritorio** (traducción con contexto, overlay personalizable, doblaje de voz): ver [docs/MEJORAS_EN_VIVO.md](docs/MEJORAS_EN_VIVO.md).
 
+☁️ **Variante cliente ligero + AWS** (la PC solo captura audio y muestra el overlay; todo lo demás y tus claves en tu servidor): ver [docs/CLIENTE_AWS.md](docs/CLIENTE_AWS.md).
+
 ---
 
 ## ✨ Características Principales

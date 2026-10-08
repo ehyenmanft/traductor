@@ -99,6 +99,61 @@ class Translator(unittest.TestCase):
             self.assertEqual(t.translate_final("Join Black Mesa", "en"), "Únete a Black Mesa")
         self.assertEqual(t.translate_partial("hi", "en") or "", t.translate_partial("hi", "en") or "")
 
+    def test_total_failure_reports_the_cause_once_and_keeps_original(self):
+        probs = []
+        t = make(); t.on_problem = probs.append
+        def post(*a, **k): raise RuntimeError("401 Client Error: Unauthorized for url: https://api.groq.com/x")
+        with mock.patch.object(lt.requests, "post", post), mock.patch.object(t, "_google", side_effect=RuntimeError("bloqueado")), \
+             mock.patch.object(t, "_mymemory", side_effect=RuntimeError("caído")):
+            out = t.translate_final("hello", "en")
+        self.assertEqual(out, "hello")                                   # sin traducción: queda el original…
+        self.assertEqual(len(probs), 1); self.assertIn("rechazada", probs[0])      # …pero AVISA, con la causa
+        probs.clear(); t2 = lt.LiveTranslator(target="es", groq_key=""); t2.on_problem = probs.append
+        with mock.patch.object(t2, "_google", side_effect=RuntimeError("x")), mock.patch.object(t2, "_mymemory", side_effect=RuntimeError("y")):
+            t2.translate_final("hello", "en")
+        self.assertIn("falta groq_api_key", probs[0])
+        probs.clear(); t3 = make(); t3.on_problem = probs.append
+        with mock.patch.object(lt.requests, "post", side_effect=RuntimeError("429 Too Many Requests")), \
+             mock.patch.object(t3, "_google", side_effect=RuntimeError("x")), mock.patch.object(t3, "_mymemory", side_effect=RuntimeError("y")):
+            t3.translate_final("hello", "en")
+        self.assertIn("saturado", probs[0])
+
+    def test_retired_models_are_replaced_by_the_ones_groq_lists(self):
+        class R:
+            def __init__(self, code, js=None, text=""): self.status_code, self._js, self.text, self.ok = code, js, text, code < 400
+            def json(self): return self._js
+            def raise_for_status(self): pass
+        calls = []
+        def post(url, **k):
+            m = k["json"]["model"]; calls.append(m)
+            return R(200, {"choices": [{"message": {"content": "Hola"}}]}) if m == "nuevo-llama-70b" else R(404, text="model not found")
+        listing = R(200, {"data": [{"id": "whisper-large-v3", "active": True}, {"id": "nuevo-llama-70b", "active": True},
+                                   {"id": "nuevo-llama-8b-instant", "active": True}]})
+        t = make()
+        with mock.patch.object(lt.requests, "post", post), mock.patch.object(lt.requests, "get", return_value=listing):
+            self.assertEqual(t.translate_final("hello", "en"), "Hola")
+        self.assertEqual(t.final_models[0], "nuevo-llama-70b"); self.assertNotIn("whisper-large-v3", t.final_models)
+        self.assertEqual(t.partial_model, "nuevo-llama-8b-instant")
+
+    def test_reasoning_models_get_low_effort_and_think_tags_are_stripped(self):
+        class R:
+            status_code, text = 200, ""
+            def raise_for_status(self): pass
+            def json(self): return {"choices": [{"message": {"content": "<think>hmm</think>Hola"}}]}
+        seen = []
+        def post(url, **k): seen.append(k["json"]); return R()
+        t = make()
+        with mock.patch.object(lt.requests, "post", post):
+            out = t._groq("openai/gpt-oss-120b", [{"role": "user", "content": "x"}], 220, 5.0)
+        self.assertEqual(out, "Hola"); self.assertEqual(seen[0]["reasoning_effort"], "low"); self.assertGreaterEqual(seen[0]["max_tokens"], 400)
+
+    def test_no_problem_reported_when_something_works(self):
+        probs = []
+        t = lt.LiveTranslator(target="es", groq_key=""); t.on_problem = probs.append
+        with mock.patch.object(t, "_google", side_effect=RuntimeError("bloqueado")), mock.patch.object(t, "_mymemory", return_value="Hola mundo"):
+            self.assertEqual(t.translate_final("hello world", "en"), "Hola mundo")      # MyMemory salva la frase
+        self.assertEqual(probs, [])
+
     def test_partial_failure_does_not_call_google_when_groq_configured(self):
         t = make()
         g = mock.Mock(return_value="G")

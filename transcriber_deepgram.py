@@ -14,7 +14,7 @@ import time
 
 import numpy as np
 
-from transcriber import TranscriptSegment, clean_text
+from transcript import TranscriptSegment, clean_text
 
 RATE = 16000
 DG_BASE = "wss://api.deepgram.com/v1/listen"
@@ -164,8 +164,11 @@ class DeepgramTranscriber:
                             ws.send(json.dumps({"type": "KeepAlive"}))
                             last_send = time.monotonic()
                         continue
-                    pcm = (np.clip(chunk, -1.0, 1.0) * 32767).astype(
-                        np.int16).tobytes()
+                    if isinstance(chunk, (bytes, bytearray)):
+                        pcm = bytes(chunk)           # ya viene en int16 (servidor remoto)
+                    else:
+                        pcm = (np.clip(chunk, -1.0, 1.0) * 32767).astype(
+                            np.int16).tobytes()
                     ws.send_binary(pcm)
                     last_send = time.monotonic()
 

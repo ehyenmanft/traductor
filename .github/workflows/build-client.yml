@@ -1,0 +1,62 @@
+name: Compilar cliente de Windows
+
+# Compila TraductorCliente.exe en un Windows de GitHub (no hace falta Python en tu PC).
+# Descarga el resultado en: Actions → la última ejecución → Artifacts → TraductorCliente-windows
+on:
+  push:
+    branches: [claude/traductor-cliente-aws]
+  workflow_dispatch:
+
+jobs:
+  windows-client:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependencias
+        shell: bash
+        run: python -m pip install -r requirements-client.txt pyinstaller
+
+      - name: Pruebas del cliente (informativas)
+        shell: bash
+        continue-on-error: true
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pip install websockets deep-translator edge-tts
+          python -m unittest tests.test_remote tests.test_client_app tests.test_overlay_style -v
+
+      - name: Compilar el .exe
+        shell: bash
+        run: |
+          python -m PyInstaller --noconfirm --clean --onedir --windowed \
+            --name TraductorCliente --icon traductor.ico \
+            --hidden-import style_dialog \
+            --exclude-module faster_whisper --exclude-module ctranslate2 \
+            --exclude-module onnxruntime --exclude-module av --exclude-module websockets \
+            client_main.py
+          cp traductor.ico config.client.example.json dist/TraductorCliente/
+          du -sh dist/TraductorCliente
+
+      - name: Autoprueba del .exe empaquetado
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          ./dist/TraductorCliente/TraductorCliente.exe --selftest selftest.txt || true
+          cat selftest.txt
+          grep -q "SELFTEST OK" selftest.txt
+
+      - name: Comprimir
+        shell: pwsh
+        run: Compress-Archive -Path dist/TraductorCliente -DestinationPath TraductorCliente-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TraductorCliente-windows
+          path: TraductorCliente-windows.zip
+          retention-days: 30

@@ -1,0 +1,7 @@
+{
+  "host": "127.0.0.1",
+  "port": 8765,
+  "token": "CAMBIA-ESTE-TOKEN",
+  "keys_file": "/home/ubuntu/traductor/config.json",
+  "max_session_minutes": 0
+}
