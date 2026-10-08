@@ -35,18 +35,23 @@ OK="${YES:+s}"
 [ -n "$OK" ] || read -rp "¿Continuar? [s/N] " OK
 [ "${OK,,}" = "s" ] || { echo "Cancelado."; exit 0; }
 sudo systemctl stop traductor-bot || true
-curl -fsS "https://api.telegram.org/bot${TOKEN}/logOut" ; echo
+# si ya estaba cerrada (por un intento anterior) Telegram responde error: no importa
+curl -sS "https://api.telegram.org/bot${TOKEN}/logOut" || true; echo
 
 echo "==> Arrancando el servidor local..."
+IMG=aiogram/telegram-bot-api:latest
+sudo docker pull -q "$IMG" >/dev/null
 sudo docker rm -f telegram-bot-api >/dev/null 2>&1 || true
-# Se monta el MISMO directorio en el mismo camino y se corre con tu usuario, para que
-# el bot pueda leer/mover los archivos que el servidor descarga.
+# Se ejecuta el binario directamente (saltando el entrypoint de la imagen, que
+# intenta hacer chown y falla sin root) con TU usuario: así los archivos que
+# descarga quedan a tu nombre y el bot puede leerlos, moverlos y borrarlos.
+BIN="$(sudo docker run --rm --entrypoint sh "$IMG" -c 'command -v telegram-bot-api' || true)"
+BIN="${BIN:-/usr/local/bin/telegram-bot-api}"
 sudo docker run -d --name telegram-bot-api --restart always \
-  --user "$(id -u):$(id -g)" -p 127.0.0.1:8081:8081 \
-  -v "$DATA:$DATA" \
-  -e TELEGRAM_API_ID="$API_ID" -e TELEGRAM_API_HASH="$API_HASH" \
-  -e TELEGRAM_LOCAL=1 -e TELEGRAM_WORK_DIR="$DATA" -e TELEGRAM_TEMP_DIR=/tmp \
-  aiogram/telegram-bot-api:latest >/dev/null
+  --user "$(id -u):$(id -g)" --entrypoint "$BIN" -p 127.0.0.1:8081:8081 \
+  -v "$DATA:$DATA" "$IMG" \
+  --local --api-id="$API_ID" --api-hash="$API_HASH" \
+  --dir="$DATA" --temp-dir=/tmp --http-port=8081 >/dev/null
 sleep 6
 
 if curl -fsS "http://127.0.0.1:8081/bot${TOKEN}/getMe" | grep -q '"ok":true'; then
