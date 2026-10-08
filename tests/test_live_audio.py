@@ -146,6 +146,26 @@ class Deepgram(unittest.TestCase):
         q = queue.Queue()
         return td.DeepgramTranscriber(q, api_key="k", **kw), q
 
+    def test_nonstop_speech_is_cut_into_finals_and_pending_text_is_flushed(self):
+        t, _ = self._transcriber(); q = t.text_queue
+        sentence = "This is a fairly long sentence about the game and what we are doing today. "
+        for i in range(5):                      # 5 resultados finales sin speech_final (habla sin pausas)
+            t.handle_message({"type": "Results", "is_final": True, "speech_final": False,
+                              "channel": {"alternatives": [{"transcript": sentence.strip(), "words": []}]}})
+        finals = []
+        while not q.empty():
+            seg = q.get()
+            if seg.is_final: finals.append(seg.text)
+        self.assertGreaterEqual(len(finals), 1)                          # no espera a una pausa que no llega
+        self.assertTrue(all(len(f) < 460 for f in finals))
+        t.handle_message({"type": "Results", "is_final": False, "channel": {"alternatives": [{"transcript": "and one last thing", "words": []}]}})
+        t._flush_final(True)                                             # corte de conexión: lo visto no se pierde
+        tail = []
+        while not q.empty():
+            seg = q.get()
+            if seg.is_final: tail.append(seg.text)
+        self.assertIn("and one last thing", " ".join(tail))
+
     def test_utterance_end_flushes_open_phrase(self):
         t, _ = self._transcriber()
         t.handle_message({"type": "Results", "is_final": True, "speech_final": False,
