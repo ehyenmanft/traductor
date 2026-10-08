@@ -11,7 +11,9 @@ Si el túnel se cae, se vuelve a levantar solo.
 """
 from __future__ import annotations
 
+import glob
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -26,6 +28,38 @@ def port_open(port: int, host: str = "127.0.0.1", timeout: float = 0.5) -> bool:
             return True
     except OSError:
         return False
+
+
+def find_key(spec: str, base_dir: str) -> str:
+    """Localiza la clave SSH. `spec` es lo que diga "key" en config.json:
+
+      "auto" (o ausente)  → la única clave .pem que haya junto al programa
+      "mi_clave.pem"      → ese archivo, buscado junto al programa
+      "C:/ruta/clave.pem" → esa ruta (admite ~ y %VARIABLES%); si no existe pero hay un archivo con
+                            el MISMO NOMBRE junto al programa, se usa ese (típico: ruta mal escrita)
+    """
+    spec = (spec or "").strip()
+    if not spec or spec.lower() == "auto":
+        pems = sorted(glob.glob(os.path.join(base_dir, "*.pem")))
+        if len(pems) == 1:
+            return pems[0]
+        if not pems:
+            raise FileNotFoundError(
+                f"No hay ninguna clave .pem junto al programa ({base_dir}).\n"
+                "Copia ahí tu clave, o pon su ruta en \"key\" de config.json.")
+        raise FileNotFoundError(
+            "Hay varias claves .pem junto al programa: "
+            + ", ".join(os.path.basename(p) for p in pems)
+            + ".\nIndica cuál usar en \"key\" de config.json.")
+    path = os.path.expandvars(os.path.expanduser(spec))
+    name = re.split(r"[\\/]", path)[-1]                      # nombre de archivo con / o \
+    candidates = [path] if os.path.isabs(path) else [os.path.join(base_dir, path), os.path.abspath(path)]
+    candidates.append(os.path.join(base_dir, name))           # mismo nombre junto al programa
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    raise FileNotFoundError(f"No encuentro la clave SSH: {spec}\n"
+                            f"La busqué también en la carpeta del programa ({base_dir}).")
 
 
 def prepare_key(path: str, dest_dir: str) -> str:

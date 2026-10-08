@@ -36,9 +36,10 @@ Instala todo en `~/traductor-live` (carpeta, entorno virtual y servicio `traduct
    {
      "server": "ws://127.0.0.1:8765",
      "token": "EL_TOKEN_DEL_PASO_1",
-     "ssh": { "host": "IP_PUBLICA_DE_AWS", "user": "ubuntu", "key": "C:\\Users\\TU_USUARIO\\Downloads\\LightsailDefaultKey-us-east-2.pem" }
+     "ssh": { "host": "IP_PUBLICA_DE_AWS", "user": "ubuntu", "key": "auto" }
    }
    ```
+   **Clave SSH (`"key"`):** con `"auto"` el programa usa la única clave `.pem` que haya **en la misma carpeta que el `.exe`**. También puedes poner solo el nombre del archivo (`"mi_clave.pem"`) o una ruta completa (`"C:/Users/Ana/.ssh/mi_clave"`, admite `~` y `%USERPROFILE%`); si la ruta está mal escrita pero hay un archivo con ese mismo nombre junto al programa, usa ese. Si hay varias `.pem` en la carpeta, indica cuál. `"key": ""` = sin clave (usa tu agente SSH).
 3. Doble clic en **TraductorCliente.exe**. Verás "🔌 Conectando con AWS…" y luego "✅ Conectado con AWS".
 
 La primera vez Windows SmartScreen puede avisar de que el programa no está firmado: *Más información → Ejecutar de todas formas*.

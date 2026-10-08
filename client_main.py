@@ -24,7 +24,7 @@ from audio_capture import SystemAudioCapture
 from live_client import ClientDubPlayer, RemoteDubber, RemoteSession, RemoteTranslator
 from live_dubber import PyAudioPlayer
 from overlay import TranslationOverlay
-from tunnel import SshTunnel, prepare_key
+from tunnel import SshTunnel, find_key, prepare_key
 
 STATUS_TEXT = {"connecting": "🔌 Conectando con AWS…", "connected": "✅ Conectado con AWS",
                "reconnecting": "⚠️ Sin conexión; reconectando…"}
@@ -115,8 +115,10 @@ def build(cfg: dict, app: QApplication, no_tunnel: bool = False, capture_factory
     ssh = cfg.get("ssh") if isinstance(cfg.get("ssh"), dict) else None
     if ssh and not no_tunnel:
         try:
-            key = prepare_key(str(ssh["key"]), os.path.join(os.environ.get("LOCALAPPDATA", app_dir()),
-                                                            "TraductorCliente")) if ssh.get("key") else ""
+            spec = ssh.get("key", "auto")           # "" = sin clave (agente SSH); "auto" = la .pem junto al programa
+            key = prepare_key(find_key(str(spec), app_dir()),
+                              os.path.join(os.environ.get("LOCALAPPDATA", app_dir()), "TraductorCliente")) \
+                if str(spec).strip() != "" else ""
         except FileNotFoundError as e:
             raise ClientError(str(e)) from e
 

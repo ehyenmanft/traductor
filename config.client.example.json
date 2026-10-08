@@ -4,7 +4,7 @@
   "ssh": {
     "host": "IP_PUBLICA_DE_TU_AWS",
     "user": "ubuntu",
-    "key": "C:\\Users\\TU_USUARIO\\Downloads\\LightsailDefaultKey-us-east-2.pem"
+    "key": "auto"
   },
   "tone": "gamer",
   "dub": false

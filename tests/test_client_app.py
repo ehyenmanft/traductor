@@ -131,6 +131,17 @@ class ClientApp(unittest.TestCase):
             self.assertIsNone(c2.tunnel)
         with self.assertRaises(client_main.ClientError):
             client_main.build({**cfg, "ssh": {**cfg["ssh"], "key": "/no/existe.pem"}}, _APP, capture_factory=FakeCapture, player=FakePlayer())
+        # "key": "auto" (y sin "key") usan la .pem junto al programa; "" = sin clave
+        base = tempfile.mkdtemp(); pem = os.path.join(base, "clave.pem"); open(pem, "w").write("K")
+        for ssh in ({"host": "h", "key": "auto"}, {"host": "h"}):
+            with mock.patch.object(client_main, "app_dir", return_value=base), \
+                 mock.patch.object(client_main, "prepare_key", side_effect=lambda p, d: p):
+                c3 = client_main.build({"token": TOKEN, "ssh": ssh}, _APP, capture_factory=FakeCapture, player=FakePlayer())
+            self.addCleanup(c3.shutdown); self.addCleanup(c3.overlay.close); self.addCleanup(c3.tray.hide)
+            self.assertEqual(c3.tunnel.command()[c3.tunnel.command().index("-i") + 1], pem)
+        c4 = client_main.build({"token": TOKEN, "ssh": {"host": "h", "key": ""}}, _APP, capture_factory=FakeCapture, player=FakePlayer())
+        self.addCleanup(c4.shutdown); self.addCleanup(c4.overlay.close); self.addCleanup(c4.tray.hide)
+        self.assertNotIn("-i", c4.tunnel.command())
 
 
 def free_port():
@@ -179,6 +190,33 @@ class Tunnel(unittest.TestCase):
         states = []
         t = tn.SshTunnel("h", ssh_exe="/no/hay/ssh", on_status=states.append); t.start()
         self.assertTrue(wait_for(lambda: "no-ssh" in states)); t.stop()
+
+    def test_find_key_auto_relative_and_wrong_path(self):
+        base = tempfile.mkdtemp()
+        with self.assertRaises(FileNotFoundError) as cm:                      # sin ninguna .pem
+            tn.find_key("auto", base)
+        self.assertIn("ninguna clave .pem", str(cm.exception))
+        pem = os.path.join(base, "LightsailDefaultKey-us-east-2.pem"); open(pem, "w").write("K")
+        self.assertEqual(tn.find_key("auto", base), pem)                      # una sola → automática
+        self.assertEqual(tn.find_key("", base), pem); self.assertEqual(tn.find_key(None, base), pem)
+        self.assertEqual(tn.find_key("LightsailDefaultKey-us-east-2.pem", base), pem)   # nombre suelto
+        # ruta mal escrita (usuario inventado, barras de Windows) pero el archivo está junto al programa
+        self.assertEqual(tn.find_key("C:\\\\Users\\\\TU_USUARIO\\\\Downloads\\\\LightsailDefaultKey-us-east-2.pem", base), pem)
+        self.assertEqual(tn.find_key("C:/Users/TU_USUARIO/Downloads/LightsailDefaultKey-us-east-2.pem", base), pem)
+        other = os.path.join(base, "otra.pem"); open(other, "w").write("K2")
+        with self.assertRaises(FileNotFoundError) as cm:                      # varias → no adivina
+            tn.find_key("auto", base)
+        self.assertIn("varias", str(cm.exception)); self.assertIn("otra.pem", str(cm.exception))
+        self.assertEqual(tn.find_key("otra.pem", base), other)                # …pero se puede elegir
+        with self.assertRaises(FileNotFoundError) as cm:
+            tn.find_key("C:/no/existe/fantasma.pem", base)
+        self.assertIn("fantasma.pem", str(cm.exception))
+
+    def test_find_key_expands_home_and_env(self):
+        d = tempfile.mkdtemp(); key = os.path.join(d, "k.pem"); open(key, "w").write("K")
+        with mock.patch.dict(os.environ, {"MI_CARPETA": d, "HOME": d, "USERPROFILE": d}):
+            self.assertEqual(tn.find_key("$MI_CARPETA/k.pem" if os.name != "nt" else "%MI_CARPETA%/k.pem", tempfile.mkdtemp()), key)
+            self.assertEqual(tn.find_key("~/k.pem", tempfile.mkdtemp()), key)
 
     @unittest.skipIf(sys.platform == "win32", "permisos POSIX")
     def test_prepare_key_copies_with_private_permissions(self):
