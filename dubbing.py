@@ -54,7 +54,7 @@ def _duration(path: str) -> float:
 
 
 def make_dub_track(segs: list[Segment], target: str, gender: str, duration: float,
-                   workdir: str, synth=edge_synth) -> str:
+                   workdir: str, synth=edge_synth, progress=None) -> str:
     """Devuelve la ruta de un .wav del largo del video con la voz doblada."""
     if target not in VOICES:
         raise RuntimeError("no hay voz disponible para ese idioma")
@@ -74,6 +74,8 @@ def make_dub_track(segs: list[Segment], target: str, gender: str, duration: floa
         d = _duration(path)
         speed = min(MAX_SPEEDUP, d / slot) if d > slot else 1.0
         clips.append((path, s.start, speed))
+        if progress:
+            progress(0.9 * (i + 1) / len(items))
 
     cmd = ["ffmpeg", "-y"]
     for path, _, _ in clips:
@@ -94,4 +96,6 @@ def make_dub_track(segs: list[Segment], target: str, gender: str, duration: floa
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
         raise RuntimeError("ffmpeg (doblaje) falló: " + res.stderr[-300:])
+    if progress:
+        progress(1.0)
     return out

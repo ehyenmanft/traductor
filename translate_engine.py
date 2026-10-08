@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -124,12 +125,20 @@ def _groq_batch(key: str, lines: list[tuple[int, str, str]], target: str,
 def translate_segments(segs: list[Segment], target: str,
                        groq_api_key: str | None = None, tone: str = "natural",
                        glossary: dict[str, str] | None = None,
-                       censor: bool = False) -> list[str]:
+                       censor: bool = False, progress=None) -> list[str]:
     """Rellena seg.translation. Devuelve los problemas encontrados."""
     glossary = {k: v for k, v in (glossary or {}).items() if k and v}
     errors: list[str] = []
     for s in segs:
         s.translation = ""
+    lock = threading.Lock()
+    state = {"done": 0, "total": 1}
+
+    def tick(n: int = 1):
+        with lock:
+            state["done"] += n
+            if progress:
+                progress(min(1.0, state["done"] / state["total"]))
 
     if target == "orig":                       # solo transcribir
         for s in segs:
@@ -142,6 +151,7 @@ def translate_segments(segs: list[Segment], target: str,
             else:
                 pending.append(i)
 
+        state["total"] = max(1, len(pending))
         if groq_api_key and pending:
             for k in range(0, len(pending), BATCH):
                 chunk = pending[k:k + BATCH]
@@ -152,12 +162,19 @@ def translate_segments(segs: list[Segment], target: str,
                     for i, t in got.items():
                         if i in chunk:
                             segs[i].translation = t
+                    tick(sum(1 for i in got if i in chunk))
                 except Exception as e:  # noqa: BLE001
                     errors.append(str(e))
 
         cache: dict[tuple[str, str], str] = {}
 
         def fallback(i: int) -> str:
+            try:
+                return _fallback(i)
+            finally:
+                tick()
+
+        def _fallback(i: int) -> str:
             s = segs[i]
             src = norm_lang(s.lang)
             text, slots = _protect(s.text, glossary)
@@ -181,6 +198,8 @@ def translate_segments(segs: list[Segment], target: str,
             for i, t in zip(todo, pool.map(fallback, todo)):
                 segs[i].translation = t
 
+    if progress:
+        progress(1.0)
     if censor:
         for s in segs:
             s.translation = censor_text(s.translation)

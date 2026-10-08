@@ -174,3 +174,12 @@ El bot queda como servicio (`traductor-bot`): arranca con el servidor y se reini
 El tono, el contexto y el glosario completo los aplica Groq (`groq_api_key`); sin Groq se usa Google/MyMemory con protección de los términos del glosario. El doblaje usa `edge-tts` (internet) y, si falla, el video sale igual sin doblaje.
 
 No incluido: sincronía de labios, avatares IA, emojis a color animados ni música/transiciones.
+
+### 📏 Videos grandes (más de 20 MB) y barra de progreso
+
+Telegram solo deja que un bot descargue archivos de hasta **20 MB**, y partir el video no ayuda (el límite es por archivo que el bot descarga). Hay dos soluciones, que se pueden combinar:
+
+1. **Pegar un enlace** (Drive, Dropbox, YouTube, Vimeo o archivo directo `.mp4`): el bot lo descarga él mismo, hasta 2 GB y 90 min. Se rechazan direcciones privadas por seguridad.
+2. **Servidor local de la Bot API** (`bash deploy/local_api.sh`, requiere `api_id`/`api_hash` de my.telegram.org): el bot recibe y envía videos de hasta ~2 GB directamente. Configura `telegram_api_url` en `config.json`.
+
+Mientras se procesa, el mensaje muestra una **barra con porcentaje y tiempo transcurrido** (`▰▰▰▰▱▱▱▱ 52%`), calculada con el avance real de ffmpeg, la traducción y el doblaje. Sin servidor local, el resultado se comprime para entrar en los 50 MB que permite subir Telegram.

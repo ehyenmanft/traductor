@@ -8,13 +8,20 @@ Pipeline de traducción de videos (sin GUI, sin Telegram):
 
 El video y el audio originales se conservan íntegros: sin doblaje el audio se
 copia sin recodificar y los subtítulos solo se superponen.
+
+Todas las etapas largas informan su avance con progress(pct, texto), donde pct
+va de 0 a 100 sobre el trabajo total.
 """
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import requests
@@ -30,6 +37,14 @@ DG_REST_URL = "https://api.deepgram.com/v1/listen"
 MAX_CHARS = 80          # máximo de caracteres originales por subtítulo
 MAX_SECONDS = 6.0       # duración máxima por subtítulo
 
+# Etapas del trabajo (porcentaje de la barra): audio, transcripción
+AUDIO_RANGE = (0.0, 6.0)
+STT_RANGE = (6.0, 40.0)
+
+
+def _noop(pct: float, text: str = ""):
+    pass
+
 
 class SameLanguageError(Exception):
     """Todo el habla ya está en el idioma destino: no hay nada que traducir."""
@@ -37,6 +52,13 @@ class SameLanguageError(Exception):
     def __init__(self, langs: list[str]):
         super().__init__("same language")
         self.langs = langs
+
+
+def _stage(progress, lo: float, hi: float):
+    """Convierte progreso de una etapa (0..1) en progreso global (lo..hi)."""
+    def cb(frac: float, text: str = ""):
+        progress(lo + (hi - lo) * max(0.0, min(1.0, frac)), text)
+    return cb
 
 
 # --------------------------------------------------------------------------
@@ -48,6 +70,34 @@ def _run(cmd: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
     if res.returncode != 0:
         raise RuntimeError(f"{cmd[0]} falló: {res.stderr[-800:]}")
     return res
+
+
+_KV = re.compile(r"^[a-z_0-9]+=")
+
+
+def _run_progress(cmd: list[str], cwd: str | None = None, duration: float = 0.0,
+                  on_frac=None):
+    """Ejecuta ffmpeg informando el avance real (según el tiempo ya codificado)."""
+    full = [cmd[0], "-nostats", "-loglevel", "error", "-progress", "pipe:1"] + cmd[1:]
+    proc = subprocess.Popen(full, cwd=cwd, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True)
+    tail: list[str] = []
+    for line in proc.stdout:
+        line = line.strip()
+        if line.startswith(("out_time_us=", "out_time_ms=")):
+            try:
+                us = int(line.split("=", 1)[1])
+            except ValueError:
+                continue            # "N/A" al comienzo
+            if duration and on_frac and us >= 0:
+                on_frac(min(1.0, us / 1e6 / duration))
+        elif line and not _KV.match(line):
+            tail.append(line)
+            tail = tail[-12:]
+    if proc.wait() != 0:
+        raise RuntimeError(f"{cmd[0]} falló: " + " | ".join(tail)[-800:])
+    if on_frac:
+        on_frac(1.0)
 
 
 def _num(v) -> float:
@@ -78,10 +128,11 @@ def probe(video: str) -> dict:
     return dict(width=w, height=h, duration=dur, has_audio=has_audio)
 
 
-def extract_audio(video: str, out_path: str) -> str:
+def extract_audio(video: str, out_path: str, duration: float = 0.0,
+                  on_frac=None) -> str:
     """Audio mono 16 kHz en FLAC (liviano y sin pérdida para el ASR)."""
-    _run(["ffmpeg", "-y", "-i", video, "-vn", "-ac", "1", "-ar", "16000",
-          "-c:a", "flac", out_path])
+    _run_progress(["ffmpeg", "-y", "-i", video, "-vn", "-ac", "1", "-ar", "16000",
+                   "-c:a", "flac", out_path], duration=duration, on_frac=on_frac)
     return out_path
 
 
@@ -99,7 +150,7 @@ def extract_frame(video: str, out_path: str, duration: float,
 # --------------------------------------------------------------------------
 
 def transcribe_file(audio_path: str, api_key: str,
-                    timeout: float = 600) -> list[Segment]:
+                    timeout: float = 1800) -> list[Segment]:
     """Transcribe con nova-3 multilingüe; cada palabra trae su idioma."""
     params = {"model": "nova-3", "language": "multi", "smart_format": "true",
               "punctuate": "true"}
@@ -212,18 +263,27 @@ def render_preview(frame: str, st: SubtitleStyle, out_path: str,
 
 def burn_subtitles(video: str, ass_text: str, out_path: str, workdir: str,
                    duration: float = 0.0, max_mb: float | None = None,
-                   dub_track: str | None = None, orig_gain: float = 1.0) -> str:
+                   dub_track: str | None = None, orig_gain: float = 1.0,
+                   on_frac=None) -> str:
     """Superpone el .ass sobre el video. Imagen recodificada (x264); el audio
-    se copia tal cual, o se mezcla con la pista de doblaje si se indica. Si
-    max_mb está definido y el resultado lo excede, se recodifica con bitrate
-    calculado para entrar en el límite."""
+    se copia tal cual, o se mezcla con la pista de doblaje si se indica.
+
+    Si max_mb está definido y el video original ya pesa casi eso, se codifica
+    directamente a un bitrate que entre en el límite (sin pasada de prueba).
+    on_frac(0..1) informa el avance real de la codificación."""
     ass_name = "subs.ass"   # relativo + cwd evita escapes de rutas en el filtro
     with open(os.path.join(workdir, ass_name), "w", encoding="utf-8") as f:
         f.write(ass_text)
     vf = f"subtitles={ass_name}"
     src, dst = os.path.abspath(video), os.path.abspath(out_path)
 
-    def render(vopts: list[str]):
+    def fit_opts(mb: float) -> list[str]:
+        total_kbps = mb * 8 * 1024 * 0.92 / duration
+        v_kbps = max(150, int(total_kbps - 128))
+        return ["-preset", "veryfast", "-b:v", f"{v_kbps}k",
+                "-maxrate", f"{int(v_kbps * 1.4)}k", "-bufsize", f"{v_kbps * 2}k"]
+
+    def render(vopts: list[str], cb=None):
         if dub_track:
             afilt = (f"[0:a]volume={orig_gain}[o];[o][1:a]amix=inputs=2:normalize=0:"
                      "duration=first[a]" if orig_gain > 0 else "[1:a]anull[a]")
@@ -234,24 +294,24 @@ def burn_subtitles(video: str, ass_text: str, out_path: str, workdir: str,
             cmd = ["ffmpeg", "-y", "-i", src, "-vf", vf, "-map", "0:v:0",
                    "-map", "0:a?", "-map", "0:s?", "-c:a", "copy", "-c:s",
                    "copy" if out_path.endswith(".mkv") else "mov_text"]
-        _run(cmd + ["-c:v", "libx264", *vopts, "-pix_fmt", "yuv420p",
-                    "-movflags", "+faststart", dst], cwd=workdir)
+        _run_progress(cmd + ["-c:v", "libx264", *vopts, "-pix_fmt", "yuv420p",
+                             "-movflags", "+faststart", dst],
+                      cwd=workdir, duration=duration, on_frac=cb)
 
+    must_fit = bool(max_mb and duration and os.path.getsize(src) > max_mb * 1024 * 1024 * 0.9)
+    first = fit_opts(max_mb) if must_fit else ["-preset", "veryfast", "-crf", "20"]
     try:
-        render(["-preset", "veryfast", "-crf", "20"])
+        render(first, on_frac)
     except RuntimeError:
         # audio/subs incompatibles con -c copy: ignorar pistas de subtítulos
         # y recodificar audio a AAC como último recurso
-        _run(["ffmpeg", "-y", "-i", src, "-vf", vf, "-map", "0:v:0", "-map", "0:a?",
-              "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-              "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-              "-movflags", "+faststart", dst], cwd=workdir)
+        _run_progress(["ffmpeg", "-y", "-i", src, "-vf", vf, "-map", "0:v:0", "-map", "0:a?",
+                       "-c:v", "libx264", *first, "-pix_fmt", "yuv420p", "-c:a", "aac",
+                       "-b:a", "192k", "-movflags", "+faststart", dst],
+                      cwd=workdir, duration=duration, on_frac=on_frac)
 
     if max_mb and duration and os.path.getsize(out_path) > max_mb * 1024 * 1024:
-        total_kbps = max_mb * 8 * 1024 * 0.92 / duration
-        v_kbps = max(150, int(total_kbps - 128))
-        render(["-preset", "veryfast", "-b:v", f"{v_kbps}k",
-                "-maxrate", f"{int(v_kbps * 1.4)}k", "-bufsize", f"{v_kbps * 2}k"])
+        render(fit_opts(max_mb * 0.9))      # el bitrate quedó corto: reintento más bajo
     return out_path
 
 
@@ -279,14 +339,29 @@ class Result:
 
 
 def transcribe_video(video: str, workdir: str, deepgram_key: str,
-                     progress=lambda msg: None) -> Transcription:
+                     progress=_noop) -> Transcription:
     info = probe(video)
     if not info["has_audio"]:
         raise RuntimeError("El video no tiene pista de audio para transcribir.")
-    progress("🎧 Extrayendo audio…")
-    audio = extract_audio(video, os.path.join(workdir, "audio.flac"))
-    progress("🗣️ Transcribiendo y detectando idioma (Deepgram)…")
-    segs = transcribe_file(audio, deepgram_key)
+    a_cb = _stage(progress, *AUDIO_RANGE)
+    a_cb(0, "🎧 Extrayendo audio…")
+    audio = extract_audio(video, os.path.join(workdir, "audio.flac"), info["duration"],
+                          lambda f: a_cb(f, "🎧 Extrayendo audio…"))
+    s_cb = _stage(progress, *STT_RANGE)
+    text = "🗣️ Transcribiendo y detectando idioma (Deepgram)…"
+    s_cb(0, text)
+    # Deepgram no informa avance: se estima con una curva que se acerca a 95 %
+    # según la duración del audio, y salta al 100 % cuando responde.
+    pool = ThreadPoolExecutor(max_workers=1)
+    fut = pool.submit(transcribe_file, audio, deepgram_key)
+    expected = max(8.0, info["duration"] * 0.08)
+    t0 = time.time()
+    while not fut.done():
+        time.sleep(1.0)
+        s_cb(0.95 * (1 - math.exp(-(time.time() - t0) / expected)), text)
+    segs = fut.result()
+    pool.shutdown(wait=False)
+    s_cb(1.0, text)
     if not segs:
         raise RuntimeError("No se detectó habla en el video.")
     return Transcription(segs, info)
@@ -307,11 +382,17 @@ def apply_edited_srt(tr: Transcription, srt_text: str):
 
 def render_video(video: str, tr: Transcription, st: SubtitleStyle, workdir: str,
                  groq_key: str | None = None, max_mb: float | None = None,
-                 progress=lambda msg: None,
+                 progress=_noop,
                  glossary: dict[str, str] | None = None) -> Result:
     langs = detected_languages(tr.segments)
     if st.target != "orig" and langs and all(l == st.target for l in langs):
         raise SameLanguageError(langs)
+
+    # reparto de la barra: con doblaje se reserva un tramo para la voz
+    dub_on = st.dub != "off" and st.target != "orig"
+    t_rng = (STT_RANGE[1], 55.0 if not dub_on else 52.0)
+    d_rng = (t_rng[1], 70.0)
+    e_rng = (d_rng[1] if dub_on else t_rng[1], 98.0)
 
     glossary = dict(glossary or {})
     sig = (st.target, st.tone if groq_key else "natural", st.censor,
@@ -319,9 +400,12 @@ def render_video(video: str, tr: Transcription, st: SubtitleStyle, workdir: str,
     tr.cur_sig = sig
     warnings: list[str] = []
     if tr.sig != sig:
-        progress(f"🌐 Traduciendo {len(tr.segments)} subtítulos…")
+        t_cb = _stage(progress, *t_rng)
+        t_text = f"🌐 Traduciendo {len(tr.segments)} subtítulos…"
+        t_cb(0, t_text)
         errors = translate_segments(tr.segments, st.target, groq_key or None,
-                                    st.tone, glossary, st.censor)
+                                    st.tone, glossary, st.censor,
+                                    progress=lambda f: t_cb(f, t_text))
         failed = [s for s in tr.segments if not s.translation]
         tr.warnings = []
         if len(failed) == len(tr.segments):
@@ -345,18 +429,24 @@ def render_video(video: str, tr: Transcription, st: SubtitleStyle, workdir: str,
         elif tr.dub_cache and tr.dub_cache[0] == key and os.path.exists(tr.dub_cache[1]):
             dub_track = tr.dub_cache[1]
         else:
-            progress("🎙️ Generando doblaje con voz IA…")
+            d_cb = _stage(progress, *d_rng)
+            d_text = "🎙️ Generando doblaje con voz IA…"
+            d_cb(0, d_text)
             try:
                 dub_track = dubbing.make_dub_track(
-                    tr.segments, st.target, st.dub, tr.info["duration"], workdir)
+                    tr.segments, st.target, st.dub, tr.info["duration"], workdir,
+                    progress=lambda f: d_cb(f, d_text))
                 tr.dub_cache = (key, dub_track)
             except Exception as e:  # noqa: BLE001 — el video sale sin doblaje
                 warnings.append(f"No se pudo generar el doblaje: {str(e)[:150]}")
 
-    progress("🎬 Incrustando subtítulos en el video…")
+    e_cb = _stage(progress, *e_rng)
+    e_text = "🎬 Incrustando subtítulos en el video…"
+    e_cb(0, e_text)
     ass = build_ass(tr.segments, st, tr.info["width"], tr.info["height"],
                     tr.info["duration"])
     out = burn_subtitles(video, ass, os.path.join(workdir, "traducido.mp4"),
                          workdir, tr.info["duration"], max_mb, dub_track,
-                         ORIG_VOLS.get(st.orig_vol, ORIG_VOLS["low"])[1])
+                         ORIG_VOLS.get(st.orig_vol, ORIG_VOLS["low"])[1],
+                         on_frac=lambda f: e_cb(f, e_text))
     return Result(out, build_srt(tr.segments), langs, len(tr.segments), warnings)

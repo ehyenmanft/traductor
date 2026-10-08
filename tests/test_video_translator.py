@@ -135,6 +135,37 @@ class Media(unittest.TestCase):
                                   os.path.join(self.d, f"p_{name}.jpg"), self.d)
             self.assertGreater(os.path.getsize(p), 1000)
 
+    def test_progress_real_and_monotonic(self):
+        seen = []
+        vt._run_progress(["ffmpeg", "-y", "-i", self.src, "-c:v", "libx264", os.path.join(self.d, "p.mp4")],
+                         duration=4, on_frac=seen.append)
+        self.assertEqual(seen[-1], 1.0)
+        self.assertTrue(all(0 <= x <= 1 for x in seen))
+        with self.assertRaises(RuntimeError):
+            vt._run_progress(["ffmpeg", "-y", "-i", "/no/existe.mp4", os.path.join(self.d, "z.mp4")], duration=4)
+
+    def test_render_video_reports_progress(self):
+        pts = []
+        tr = vt.Transcription(segs(), vt.probe(self.src))
+        with mock.patch.object(te, "_google", side_effect=lambda t, s, g: "TRAD " + t):
+            vt.render_video(self.src, tr, vt.SubtitleStyle(target="fr"), self.d,
+                            progress=lambda p, t="": pts.append((p, t)))
+        pcts = [p for p, _ in pts]
+        self.assertEqual(pcts, sorted(pcts))                       # nunca retrocede
+        self.assertTrue(40 <= min(pcts) <= 41 and max(pcts) >= 97)
+        self.assertTrue(any("Traduciendo" in t for _, t in pts) and any("Incrustando" in t for _, t in pts))
+        self.assertGreater(len(pcts), 3)
+
+    def test_fit_under_size_limit(self):
+        big = os.path.join(self.d, "big.mp4")
+        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=s=640x360:d=4", "-f", "lavfi", "-i", "sine=d=4",
+                        "-c:v", "libx264", "-b:v", "3M", "-c:a", "aac", big], check=True, capture_output=True)
+        limit = 0.15
+        self.assertGreater(os.path.getsize(big), limit * 1024 * 1024)
+        out = vt.burn_subtitles(big, vt.build_ass(segs(), vt.SubtitleStyle(), 640, 360, 4),
+                                os.path.join(self.d, "fit.mp4"), self.d, 4, max_mb=limit)
+        self.assertLessEqual(os.path.getsize(out), limit * 1024 * 1024)
+
     def test_dubbing_mix(self):
         s = segs()
         for x in s: x.translation = "texto doblado"

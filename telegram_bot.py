@@ -19,7 +19,8 @@ Configuración (variables de entorno o config.json junto al script):
   DEEPGRAM_API_KEY    / "deepgram_api_key"
   GROQ_API_KEY        / "groq_api_key"         (traducción con tono/contexto)
   ALLOWED_USERS       / "telegram_allowed_users"  ids o @usuarios separados por coma
-  TELEGRAM_API_URL    (opcional) servidor local de Bot API → videos de hasta 2 GB
+  TELEGRAM_API_URL    / "telegram_api_url" (opcional) servidor local de Bot API → videos de hasta 2 GB
+  También acepta enlaces (Drive, Dropbox, YouTube, archivo directo) de hasta 2 GB / 90 min.
 """
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, PersistenceInput,
                           PicklePersistence, filters)
 
+from fetch import download_url, extract_url
 from video_translator import (ALIGN, ANIMS, BGS, COLORS, DUBS, FONTS, HIGHLIGHTS,
                               HPOS, LANGUAGES, LOOK_FIELDS, ORIG_VOLS, OUTLINES,
                               PRESETS, PROGRESS, SIZES, SPACINGS, TONES, VPOS,
@@ -54,6 +56,8 @@ log = logging.getLogger("traductor-bot")
 
 CLOUD_DOWNLOAD_LIMIT = 20 * 1024 * 1024   # límite de getFile en la Bot API pública
 SEND_LIMIT_MB = 49                        # límite de subida de bots: 50 MB
+MAX_MINUTES = 90                          # duración máxima aceptada por video
+LINK_MAX_MB = 2000                        # tamaño máximo al descargar por enlace
 JOB_TTL = 2 * 3600                        # un video/menú sin usar caduca a las 2 h
 MAX_TEMPLATES = 8
 TEMPLATE_FIELDS = LOOK_FIELDS + ("size", "align_h", "align_v")
@@ -103,6 +107,45 @@ PAGES = {"font": "🔤 Fuente", "color": "🎨 Color", "outline": "✏️ Contor
 GLOSSARY_HELP = ("Glosario: /glosario hola=hello fija cómo traducir un término. "
                  "/conservar Nombre lo deja sin traducir. /glosario borrar X, "
                  "/glosario limpiar. (Lo respeta mejor Groq.)")
+
+
+def bar(pct: float, width: int = 14) -> str:
+    pct = max(0.0, min(100.0, pct))
+    filled = int(round(pct / 100 * width))
+    return "▰" * filled + "▱" * (width - filled) + f" {int(pct)}%"
+
+
+def _elapsed(t0: float) -> str:
+    s = int(time.time() - t0)
+    return f"{s // 60}m {s % 60:02d}s" if s >= 60 else f"{s}s"
+
+
+class Progress:
+    """Barra con porcentaje; se llama desde hilos de trabajo y limita las
+    ediciones de Telegram (~1 cada 2.5 s) para no toparse con el flood control."""
+
+    def __init__(self, msg, loop, markup=None):
+        self.msg, self.loop, self.markup = msg, loop, markup
+        self.t0 = time.time()
+        self.pct, self.text, self.last_t, self.last_pct = 0.0, "", 0.0, -1
+
+    def __call__(self, pct: float, text: str = ""):
+        self.pct = max(self.pct, pct)                  # nunca retrocede
+        text = text or self.text
+        now = time.time()
+        changed = int(self.pct) != self.last_pct or text != self.text
+        stage_change = text != self.text and now - self.last_t >= 1.0
+        self.text = text
+        if changed and (now - self.last_t >= 2.5 or stage_change):
+            self.last_t, self.last_pct = now, int(self.pct)
+            asyncio.run_coroutine_threadsafe(self._send(), self.loop)
+
+    async def _send(self):
+        try:
+            await _set_status(self.msg, f"{self.text}\n{bar(self.pct)}  ⏱ {_elapsed(self.t0)}",
+                              self.markup)
+        except Exception:  # noqa: BLE001 — flood control o mensaje borrado: se ignora
+            pass
 
 
 def _chunk(items: list, n: int) -> list[list]:
@@ -407,31 +450,21 @@ async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Estilo guardado reiniciado a los valores base.")
 
 
-async def on_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not await authorized(update, ctx):
-        return
+async def _start_job(update: Update, ctx: ContextTypes.DEFAULT_TYPE, fetch, first_text: str):
+    """Crea el trabajo: obtiene el video (fetch), valida, saca un fotograma y
+    muestra la vista previa con el menú. `fetch(workdir, status)` devuelve la ruta."""
     msg = update.message
-    media = msg.video or msg.video_note or msg.document or msg.animation
-    if media is None or (msg.document and not (msg.document.mime_type or "")
-                         .startswith("video/")):
-        return
-    local_api = bool(ctx.application.bot_data.get("local_api"))
-    if (media.file_size or 0) > CLOUD_DOWNLOAD_LIMIT and not local_api:
-        await msg.reply_text(
-            "⚠️ Telegram solo permite a los bots descargar videos de hasta 20 MB. "
-            "Envía uno más corto/comprimido, o configura TELEGRAM_API_URL con un "
-            "servidor local de Bot API para archivos grandes.")
-        return
-
     jobs = ctx.application.bot_data.setdefault("jobs", {})
     _purge_jobs(jobs)
-    status = await msg.reply_text("⏳ Descargando video y preparando vista previa…")
+    status = await msg.reply_text(first_text)
     workdir = tempfile.mkdtemp(prefix="trad_")
     try:
-        name = getattr(media, "file_name", None) or "video.mp4"
-        src = os.path.join(workdir, "entrada" + (os.path.splitext(name)[1] or ".mp4"))
-        await (await ctx.bot.get_file(media.file_id)).download_to_drive(src)
+        src = await fetch(workdir, status)
         info = await asyncio.to_thread(probe, src)
+        max_min = ctx.application.bot_data["max_minutes"]
+        if info["duration"] > max_min * 60:
+            raise RuntimeError(f"El video dura {info['duration'] / 60:.0f} min; el máximo "
+                               f"es {max_min} min.")
         frame = await asyncio.to_thread(
             extract_frame, src, os.path.join(workdir, "frame.jpg"), info["duration"])
 
@@ -451,6 +484,65 @@ async def on_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         log.exception("fallo preparando video")
         shutil.rmtree(workdir, ignore_errors=True)
         await status.edit_text(f"❌ No pude preparar el video: {str(e)[:400]}")
+
+
+async def on_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await authorized(update, ctx):
+        return
+    msg = update.message
+    media = msg.video or msg.video_note or msg.document or msg.animation
+    if media is None or (msg.document and not (msg.document.mime_type or "")
+                         .startswith("video/")):
+        return
+    local_api = bool(ctx.application.bot_data.get("local_api"))
+    if (media.file_size or 0) > CLOUD_DOWNLOAD_LIMIT and not local_api:
+        await msg.reply_text(
+            f"⚠️ Ese video pesa {(media.file_size or 0) / 1e6:.0f} MB y Telegram solo deja a "
+            "los bots descargar hasta 20 MB.\n\n"
+            "✅ Súbelo a Google Drive, Dropbox o YouTube y **pégame el enlace** en este chat: "
+            "lo descargo yo mismo (hasta 2 GB).\n"
+            "(El dueño del bot también puede activar el servidor local de Telegram para "
+            "recibir videos grandes directamente.)")
+        return
+
+    async def fetch(workdir: str, status) -> str:
+        name = getattr(media, "file_name", None) or "video.mp4"
+        src = os.path.join(workdir, "entrada" + (os.path.splitext(name)[1] or ".mp4"))
+        tg = await ctx.bot.get_file(media.file_id)
+        local_path = tg.file_path or ""
+        if local_api and os.path.isabs(local_path) and os.path.exists(local_path):
+            try:                       # el servidor local ya lo tiene: se mueve, no se copia
+                shutil.move(local_path, src)
+                return src
+            except OSError:
+                pass
+        await tg.download_to_drive(src)
+        if local_api and os.path.isabs(local_path):
+            try:
+                os.remove(local_path)  # libera el espacio del servidor local
+            except OSError:
+                pass
+        return src
+
+    await _start_job(update, ctx, fetch, "⏳ Descargando video y preparando vista previa…")
+
+
+async def on_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Un enlace pegado en el chat: el bot descarga el video por su cuenta."""
+    url = extract_url(update.message.text or "")
+    if not url or not await authorized(update, ctx):
+        return
+    loop = asyncio.get_running_loop()
+
+    async def fetch(workdir: str, status) -> str:
+        prog = Progress(status, loop)
+        prog.text = "⬇️ Descargando el enlace…"
+        allow_private = bool(os.environ.get("ALLOW_PRIVATE_LINKS"))
+        return await asyncio.to_thread(
+            download_url, url, workdir, lambda f: prog(100 * f, "⬇️ Descargando el enlace…"),
+            LINK_MAX_MB, allow_private)
+
+    await _start_job(update, ctx, fetch, "🔗 Enlace recibido, descargando…")
 
 
 async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -604,25 +696,21 @@ async def run_job(ctx: ContextTypes.DEFAULT_TYPE, msg, job_id: int, job: dict,
     bot, chat_id = ctx.bot, msg.chat_id
     loop = asyncio.get_running_loop()
     st: SubtitleStyle = job["style"]
-    last = {"txt": ""}
-
-    def progress(text: str):               # se llama desde el hilo de trabajo
-        if text != last["txt"]:
-            last["txt"] = text
-            asyncio.run_coroutine_threadsafe(_set_status(msg, text), loop)
+    progress = Progress(msg, loop)         # se llama desde hilos de trabajo
+    bd = ctx.application.bot_data
 
     try:
         await bot.send_chat_action(chat_id, ChatAction.TYPING)
         if job["tr"] is None:              # solo se transcribe una vez por video
             job["tr"] = await asyncio.to_thread(
                 transcribe_video, job["video"], job["dir"],
-                ctx.application.bot_data["dg_key"], progress)
+                bd["dg_key"], progress)
         result = await asyncio.to_thread(
             render_video, job["video"], job["tr"], st, job["dir"],
-            ctx.application.bot_data["groq_key"] or None, SEND_LIMIT_MB, progress,
-            glossary or {})
+            bd["groq_key"] or None, bd["send_mb"], progress, glossary or {})
 
-        await _set_status(msg, "📤 Subiendo resultado…")
+        progress.pct = 99
+        await _set_status(msg, f"📤 Subiendo resultado…\n{bar(99)}  ⏱ {_elapsed(progress.t0)}")
         await bot.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
         langs = ", ".join(LANGUAGES.get(l, l) for l in result.languages) or "?"
         caption = f"✅ Listo. Idioma(s) detectado(s): {langs} → {LANGUAGES[st.target]}"
@@ -633,8 +721,8 @@ async def run_job(ctx: ContextTypes.DEFAULT_TYPE, msg, job_id: int, job: dict,
             InlineKeyboardButton("✏️ Editar texto", callback_data=f"ed|{job_id}")]])
         with open(result.video_path, "rb") as f:
             await bot.send_video(chat_id, f, caption=caption[:1000],
-                                 supports_streaming=True, read_timeout=300,
-                                 write_timeout=300, connect_timeout=30,
+                                 supports_streaming=True, read_timeout=bd["upload_timeout"],
+                                 write_timeout=bd["upload_timeout"], connect_timeout=30,
                                  reply_markup=buttons)
         srt = os.path.join(job["dir"], "traduccion.srt")
         with open(srt, "w", encoding="utf-8") as f:
@@ -668,7 +756,7 @@ def build_app() -> Application:
         raise SystemExit("Falta TELEGRAM_BOT_TOKEN (créalo con @BotFather).")
     if not dg_key or dg_key.startswith("TU_API_KEY"):
         raise SystemExit("Falta DEEPGRAM_API_KEY.")
-    api_url = os.environ.get("TELEGRAM_API_URL", "").strip()
+    api_url = _cfg("TELEGRAM_API_URL", "telegram_api_url")
 
     # estilo, plantillas y glosario de cada usuario sobreviven a los reinicios
     persistence = PicklePersistence(
@@ -681,7 +769,11 @@ def build_app() -> Application:
     app = b.build()
     app.bot_data.update(dg_key=dg_key, groq_key=_cfg("GROQ_API_KEY", "groq_api_key"),
                         allowed=allowed_users(), sem=asyncio.Semaphore(1),
-                        local_api=bool(api_url))
+                        local_api=bool(api_url),
+                        # con servidor local el límite de subida es de ~2 GB
+                        send_mb=1900 if api_url else SEND_LIMIT_MB,
+                        upload_timeout=3600 if api_url else 300,
+                        max_minutes=int(_cfg("MAX_MINUTES", "max_minutes", str(MAX_MINUTES)) or MAX_MINUTES))
     if not app.bot_data["allowed"]:
         log.warning("ALLOWED_USERS vacío: cualquiera que encuentre el bot "
                     "gastará tu API de Deepgram. Usa /start para ver tu id.")
@@ -696,6 +788,7 @@ def build_app() -> Application:
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("srt") | filters.Document.MimeType("application/x-subrip"),
         on_srt))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_link))
     app.add_handler(CallbackQueryHandler(on_button))
     if app.job_queue:     # limpieza automática de videos temporales
         app.job_queue.run_repeating(_purge_task, interval=600, first=30)

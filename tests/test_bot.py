@@ -13,7 +13,8 @@ def make_ctx(job_user=1):
     ctx = MagicMock()
     ctx.user_data = {}
     ctx.application.bot_data = {"jobs": {}, "sem": asyncio.Semaphore(1), "dg_key": "x",
-                                "groq_key": "", "allowed": set(), "edit_msgs": {}}
+                                "groq_key": "", "allowed": set(), "edit_msgs": {},
+                                "send_mb": 49, "upload_timeout": 300, "max_minutes": 90}
     ctx.bot.send_video = AsyncMock(); ctx.bot.send_document = AsyncMock()
     ctx.bot.send_chat_action = AsyncMock()
     return ctx
@@ -94,6 +95,57 @@ class BotFlow(unittest.IsolatedAsyncioTestCase):
         args = q.message.edit_caption.await_args_list[-1]
         self.assertIn("no hay nada que traducir", args.kwargs["caption"])
         self.assertFalse(self.job["busy"])
+
+    async def test_progress_bar_throttled_monotonic(self):
+        self.assertEqual(tb.bar(0, 10), "▱▱▱▱▱▱▱▱▱▱ 0%")
+        self.assertEqual(tb.bar(50, 10), "▰▰▰▰▰▱▱▱▱▱ 50%")
+        self.assertEqual(tb.bar(100, 10), "▰▰▰▰▰▰▰▰▰▰ 100%")
+        msg = make_query("x").message
+        prog = tb.Progress(msg, asyncio.get_running_loop())
+        prog(10, "🎧 Extrayendo audio…")
+        await asyncio.sleep(0.05)
+        self.assertIn("10%", msg.edit_caption.await_args.kwargs["caption"])
+        self.assertIn("Extrayendo", msg.edit_caption.await_args.kwargs["caption"])
+        n = msg.edit_caption.await_count
+        prog(11, "🎧 Extrayendo audio…"); prog(5, "🎧 Extrayendo audio…")   # limitado y sin retroceder
+        await asyncio.sleep(0.05)
+        self.assertEqual(msg.edit_caption.await_count, n)
+        self.assertEqual(prog.pct, 11)
+
+    async def test_link_flow(self):
+        update = MagicMock(); update.effective_user.id = 1
+        update.message.text = "mira https://ejemplo.com/v.mp4 gracias"
+        status = make_query("x").message
+        update.message.reply_text = AsyncMock(return_value=status)
+        update.message.reply_photo = AsyncMock()
+        self.ctx.user_data = {}
+        def fake_dl(url, workdir, on_frac, max_mb, allow_private):
+            on_frac(0.5); import shutil; dst = os.path.join(workdir, "entrada.mp4"); shutil.copy(self.src, dst); return dst
+        with mock.patch.object(tb, "download_url", fake_dl):
+            await tb.on_link(update, self.ctx)
+        update.message.reply_photo.assert_awaited()          # llegó a la vista previa
+        self.assertTrue(any(j["dir"] != self.d for j in self.ctx.application.bot_data["jobs"].values()))
+        # texto sin enlace: se ignora
+        update.message.text = "hola"; update.message.reply_text.reset_mock()
+        await tb.on_link(update, self.ctx)
+        update.message.reply_text.assert_not_awaited()
+
+    async def test_too_long_video_rejected(self):
+        update = MagicMock(); update.effective_user.id = 1
+        status = make_query("x").message
+        update.message.reply_text = AsyncMock(return_value=status)
+        self.ctx.application.bot_data["max_minutes"] = 0
+        async def fetch(workdir, st):
+            import shutil; dst = os.path.join(workdir, "v.mp4"); shutil.copy(self.src, dst); return dst
+        await tb._start_job(update, self.ctx, fetch, "x")
+        self.assertIn("máximo", status.edit_text.await_args.args[0])
+
+    async def test_big_telegram_file_suggests_link(self):
+        update = MagicMock(); update.effective_user.id = 1
+        update.message.video.file_size = 80 * 1024 * 1024
+        update.message.reply_text = AsyncMock()
+        await tb.on_video(update, self.ctx)
+        self.assertIn("enlace", update.message.reply_text.await_args.args[0])
 
     async def test_foreign_user_and_expired(self):
         q = make_query("o|1|font|mono|main", user=2)
