@@ -21,7 +21,7 @@ from collections import deque
 import numpy as np
 import requests
 
-from transcriber import TranscriptSegment, clean_text
+from transcript import TranscriptSegment, clean_text
 
 RATE = 16000
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"

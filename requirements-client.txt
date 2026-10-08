@@ -1,0 +1,6 @@
+PyQt6>=6.6.0
+numpy>=1.24
+PyAudioWPatch>=0.2.12
+websocket-client>=1.6
+requests>=2.31
+keyboard>=0.13.5

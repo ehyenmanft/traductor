@@ -1,0 +1,11 @@
+{
+  "server": "ws://127.0.0.1:8765",
+  "token": "EL_TOKEN_QUE_TE_DIO_EL_INSTALADOR_DE_AWS",
+  "ssh": {
+    "host": "IP_PUBLICA_DE_TU_AWS",
+    "user": "ubuntu",
+    "key": "C:\\Users\\TU_USUARIO\\Downloads\\LightsailDefaultKey-us-east-2.pem"
+  },
+  "tone": "gamer",
+  "dub": false
+}

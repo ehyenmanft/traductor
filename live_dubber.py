@@ -172,6 +172,7 @@ class LiveDubber:
         self.on_notice = on_notice or (lambda msg: None)
         self.max_failures = max_failures
         self.on_state = on_state or (lambda on: None)    # avisa a la interfaz de cada cambio
+        self.gate_override: bool | None = None           # None = decidir por el dispositivo
         self._failures = 0
         self._q: deque[tuple[int, str]] = deque()
         self._cond = threading.Condition()
@@ -226,6 +227,8 @@ class LiveDubber:
     @property
     def needs_gate(self) -> bool:
         """¿La voz saldría por el dispositivo que se captura? Entonces hay que silenciar la captura."""
+        if self.gate_override is not None:       # el cliente remoto sabe por dónde suena su voz
+            return self.gate_override
         dev = self.device.strip().lower()
         if not dev or dev == "default":
             return True

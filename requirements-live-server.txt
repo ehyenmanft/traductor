@@ -1,0 +1,7 @@
+websockets>=13
+numpy>=1.24
+requests>=2.31
+websocket-client>=1.6
+deep-translator>=1.11.4
+edge-tts>=6.1.9
+av>=11
