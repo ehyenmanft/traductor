@@ -13,7 +13,7 @@ Configuración (variables de entorno o config.json junto al script):
   TELEGRAM_BOT_TOKEN  / "telegram_bot_token"   (de @BotFather)
   DEEPGRAM_API_KEY    / "deepgram_api_key"
   GROQ_API_KEY        / "groq_api_key"         (opcional, traducción mejor)
-  ALLOWED_USERS       / "telegram_allowed_users"  ids separados por coma
+  ALLOWED_USERS       / "telegram_allowed_users"  ids o @usuarios separados por coma
   TELEGRAM_API_URL    (opcional) servidor local de Bot API → videos de hasta 2 GB
 """
 from __future__ import annotations
@@ -57,9 +57,15 @@ def _cfg(env: str, key: str, default: str = "") -> str:
         return default
 
 
-def allowed_users() -> set[int]:
+def allowed_users() -> set[int | str]:
+    """Ids numéricos o @usernames (en minúsculas, sin @)."""
     raw = _cfg("ALLOWED_USERS", "telegram_allowed_users")
-    return {int(x) for x in raw.replace(";", ",").split(",") if x.strip().isdigit()}
+    out: set[int | str] = set()
+    for x in raw.replace(";", ",").split(","):
+        x = x.strip().lstrip("@").lower()
+        if x:
+            out.add(int(x) if x.isdigit() else x)
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -107,8 +113,10 @@ def menu_text(st: SubtitleStyle) -> str:
 
 async def authorized(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
     users = ctx.application.bot_data["allowed"]
-    uid = update.effective_user.id if update.effective_user else 0
-    if users and uid not in users:
+    user = update.effective_user
+    uid = user.id if user else 0
+    uname = (user.username or "").lower() if user else ""
+    if users and uid not in users and uname not in users:
         if update.effective_message:
             await update.effective_message.reply_text(
                 f"⛔ No autorizado. Tu id es {uid}; pídele al dueño que lo agregue.")
