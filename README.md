@@ -123,3 +123,74 @@ voice-overlay/
 ## 📄 Licencia
 
 Este proyecto está bajo la Licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más detalles.
+
+---
+
+## 🤖 Bot de Telegram: traducir videos con subtítulos incrustados
+
+`telegram_bot.py` reutiliza el motor del traductor (Deepgram nova-3 para transcribir y detectar idioma, Groq/Google para traducir) y devuelve **tu video original, intacto, con la traducción superpuesta** (el audio se copia sin recodificar).
+
+**Flujo:** envías un video → el bot muestra un menú (estilo, posición, tamaño, idioma destino, texto original debajo) → pulsas **✅ Confirmar** → recibes el video traducido y un `.srt`.
+
+```bash
+sudo apt install ffmpeg            # o: winget install ffmpeg  (debe estar en el PATH)
+pip install -r requirements-bot.txt
+export TELEGRAM_BOT_TOKEN=...      # de @BotFather
+export DEEPGRAM_API_KEY=...
+export GROQ_API_KEY=...            # opcional, mejora la traducción
+export ALLOWED_USERS=123456789     # tu id (el bot lo muestra con /start); evita que otros gasten tu API
+python telegram_bot.py
+```
+
+Las claves también pueden ir en `config.json` (ver `config.example.json`).
+
+**Límites:** la Bot API pública solo deja a los bots descargar videos de hasta **20 MB** y enviar hasta **50 MB** (el bot comprime el resultado para entrar). Para videos grandes, ejecuta un [servidor local de Bot API](https://github.com/tdlib/telegram-bot-api) y define `TELEGRAM_API_URL=http://localhost:8081`.
+
+Pruebas: `python -m unittest discover tests`
+
+### ☁️ Despliegue 24/7 en AWS (Ubuntu / Lightsail)
+
+```bash
+git clone -b <rama> https://github.com/ehyenmanft/traductor.git && cd traductor
+bash deploy/install.sh      # instala ffmpeg, dependencias, pide tus claves y crea el servicio systemd
+```
+
+El bot queda como servicio (`traductor-bot`): arranca con el servidor y se reinicia solo si falla. Logs: `journalctl -u traductor-bot -f`. Para actualizar: `bash deploy/update.sh`.
+
+### 🎛️ Personalización estilo CapCut / Captions
+
+| Categoría | Opciones |
+|---|---|
+| **Estilos listos** | Clásico, Cine amarillo, Caja oscura, Gamer neón, Cómic, Elegante, Retro, Minimal, 🔥 Hormozi, ⚡ Beast, 🎤 Karaoke, ⌨️ Tecleo, 💡 Neón |
+| **Aspecto** | 5 fuentes, 10 colores, contorno (5 grosores y color), caja suave/sólida, sombra, negrita, cursiva, MAYÚSCULAS, espaciado, tamaño XS–XL |
+| **Posición** | cuadrícula 5×5 (incluye puntos intermedios) |
+| **Karaoke** | palabra activa en color / con pop / relleno progresivo; 1, 2, 3 o 5 palabras por pantalla |
+| **Animación** | fundido, pop, rebote, máquina de escribir |
+| **Efectos** | neón, palabras clave en color, barra de progreso, censura de groserías |
+| **Traducción** | 10 idiomas o solo transcribir, tono (natural/formal/casual/gamer/técnico/humor), glosario (`/glosario hola=hello`, `/conservar Nombre`), texto original debajo |
+| **Doblaje** | voz IA (mujer/hombre) con el audio original mantenido, bajo o silenciado |
+| **Flujo** | vista previa en vivo, ⭐ plantillas propias, ✏️ editar el texto (.srt) y 🎨 repetir con otro estilo sin volver a transcribir |
+
+El tono, el contexto y el glosario completo los aplica Groq (`groq_api_key`); sin Groq se usa Google/MyMemory con protección de los términos del glosario. El doblaje usa `edge-tts` (internet) y, si falla, el video sale igual sin doblaje.
+
+No incluido: sincronía de labios, avatares IA, emojis a color animados ni música/transiciones.
+
+### 📏 Videos grandes (más de 20 MB) y barra de progreso
+
+Telegram solo deja que un bot descargue archivos de hasta **20 MB**, y partir el video no ayuda (el límite es por archivo que el bot descarga). Hay dos soluciones, que se pueden combinar:
+
+1. **Pegar un enlace** (Drive, Dropbox, YouTube, Vimeo o archivo directo `.mp4`): el bot lo descarga él mismo, hasta 2 GB y 90 min. Se rechazan direcciones privadas por seguridad.
+2. **Servidor local de la Bot API** (`bash deploy/local_api.sh`, requiere `api_id`/`api_hash` de my.telegram.org): el bot recibe y envía videos de hasta ~2 GB directamente. Configura `telegram_api_url` en `config.json`.
+
+Mientras se procesa, el mensaje muestra una **barra con porcentaje y tiempo transcurrido** (`▰▰▰▰▱▱▱▱ 52%`), calculada con el avance real de ffmpeg, la traducción y el doblaje. Sin servidor local, el resultado se comprime para entrar en los 50 MB que permite subir Telegram.
+
+### 🧹 Limpieza de temporales
+
+- El bot borra la carpeta de trabajo de cada video al cancelar, al fallar y a las 2 h de terminar (`keep_minutes` en `config.json`; mientras tanto permite ✏️ editar y 🎨 repetir). Revisa cada 10 min.
+- Con el servidor local de Telegram, el video recibido se **mueve** (no se copia) a la carpeta del bot, y los `.srt` se borran tras leerse.
+- Red de seguridad: `deploy/cleanup.sh` corre por cron cada 30 min (`deploy/install_cleanup.sh`, lo instala `update.sh`) y borra descargas del servidor local de más de 60 min y carpetas `/tmp/trad_*` de más de 4 h, sin tocar el estado interno de Telegram.
+- Antes de aceptar un video comprueba que haya espacio en disco, y los logs de Docker rotan (3 × 10 MB).
+
+### 💾 Almacenamiento desde Telegram
+
+`/almacenamiento` (también `/espacio`) muestra el disco del servidor (usado/libre con barra), los temporales del bot (de videos abiertos y huérfanos) y las descargas del servidor local de Telegram. El botón **🧹 Borrar temporales** pide confirmación y elimina lo que no está en uso: nunca toca videos que se están procesando ni descargando, ni el estado interno de Telegram.

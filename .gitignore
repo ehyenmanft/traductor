@@ -37,3 +37,5 @@ transcripciones/transcripcion_*.txt
 Thumbs.db
 [Dd]esktop.ini
 .DS_Store
+.venv-bot/
+bot_state.pickle
