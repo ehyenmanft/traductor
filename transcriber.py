@@ -74,7 +74,7 @@ class StreamingTranscriber:
         max_segment_sec: float = 6.0,
         partial_stride_sec: float = 1.0,
         silence_threshold: float = 0.01,   # umbral base; se auto-calibra
-        silence_chunks_to_flush: int = 2,
+        silence_sec_to_flush: float = 0.5,   # silencio que cierra una frase
     ):
         self.audio_queue = audio_queue
         self.text_queue: "queue.Queue[TranscriptSegment]" = queue.Queue()
@@ -107,7 +107,7 @@ class StreamingTranscriber:
         self.partial_stride = int(partial_stride_sec * RATE)
         self.base_threshold = silence_threshold
         self.noise_floor = silence_threshold / 2
-        self.silence_chunks_to_flush = silence_chunks_to_flush
+        self.silence_samples_to_flush = int(silence_sec_to_flush * RATE)
 
     # ---------- transcripción con filtros de calidad ----------
 
@@ -137,10 +137,11 @@ class StreamingTranscriber:
 
     # ---------- umbral dinámico ----------
 
-    def _dynamic_threshold(self, rms: float) -> float:
+    def _dynamic_threshold(self, rms: float, n: int = 4000) -> float:
         thr = min(max(self.noise_floor * 3.0, self.base_threshold * 0.6), 0.05)
         if rms < thr:  # actualizar piso de ruido con chunks silenciosos
-            self.noise_floor = 0.95 * self.noise_floor + 0.05 * rms
+            a = 1 - 0.95 ** (n / 4000)     # misma velocidad que con fragmentos de 0.25 s
+            self.noise_floor = (1 - a) * self.noise_floor + a * rms
         return thr
 
     # ---------- bucle principal ----------
@@ -148,7 +149,7 @@ class StreamingTranscriber:
     def _loop(self):
         buffer: list[np.ndarray] = []
         buffered = 0
-        silent_streak = 0
+        silent_samples = 0
         last_partial_at = 0
         last_partial_text = ""
         utterance_id = 0
@@ -161,24 +162,24 @@ class StreamingTranscriber:
                 continue
 
             rms = float(np.sqrt(np.mean(chunk**2)))
-            is_silent = rms < self._dynamic_threshold(rms)
+            is_silent = rms < self._dynamic_threshold(rms, len(chunk))
 
             if is_silent and buffered == 0:
                 continue
 
             buffer.append(chunk)
             buffered += len(chunk)
-            silent_streak = silent_streak + 1 if is_silent else 0
+            silent_samples = silent_samples + len(chunk) if is_silent else 0
 
             flush_final = (
-                (silent_streak >= self.silence_chunks_to_flush
+                (silent_samples >= self.silence_samples_to_flush
                  and buffered >= self.min_samples)
                 or buffered >= self.max_samples
             )
 
             if flush_final:
                 audio = np.concatenate(buffer)
-                buffer, buffered, silent_streak = [], 0, 0
+                buffer, buffered, silent_samples = [], 0, 0
                 last_partial_at = 0
                 text, lang, prob, _ = self._transcribe(audio)
                 # si no hay texto pero hubo parcial, cerrar con el parcial

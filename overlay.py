@@ -27,6 +27,7 @@ TEXT_AREA_HEIGHT = 280    # alto fijo del visor en modo historial
 WIDTH_PRESETS = [440, 560, 720, 900]
 CONFIG_PATH = os.path.join(app_dir(), "config.json")
 OPACITY_STEPS = [35, 65, 100, 150, 210]
+REFRESH_MS = 40           # agrupa repintados: ráfagas de parciales/traducciones = 1 pintado
 FADE_AFTER_MS = 6000
 FADED_OPACITY = 0.35
 
@@ -63,6 +64,7 @@ class TranslationOverlay(QWidget):
         self.recording = True
         self.history: list[dict] = []
         self.entries: deque[dict] = deque(maxlen=SCREEN_ENTRIES)
+        self._refresh_pending = False
         self.click_through = False
         self._drag_pos: QPoint | None = None
 
@@ -478,6 +480,13 @@ class TranslationOverlay(QWidget):
         return text
 
     def _refresh(self):
+        """Pide repintar; varias peticiones seguidas se funden en una sola."""
+        if not self._refresh_pending:
+            self._refresh_pending = True
+            QTimer.singleShot(REFRESH_MS, self._render)
+
+    def _render(self):
+        self._refresh_pending = False
         if self.collapsed:
             self.text.hide()
             self.adjustSize()

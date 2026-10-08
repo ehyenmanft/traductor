@@ -27,6 +27,16 @@ from transcriber import StreamingTranscriber
 from translator import Translator
 
 
+def _cfg_value(cfg_field: str, default=None):
+    """Valor de cualquier tipo desde config.json (listas, números…)."""
+    try:
+        import json
+        with open(os.path.join(app_dir(), "config.json"), encoding="utf-8") as f:
+            return json.load(f).get(cfg_field, default)
+    except Exception:
+        return default
+
+
 def _cfg_key(env_var: str, cfg_field: str) -> str:
     """API key desde variable de entorno o config.json."""
     key = os.environ.get(env_var, "").strip()
@@ -51,8 +61,10 @@ def build_transcriber(args, audio_queue):
     if engine == "deepgram":
         try:
             from transcriber_deepgram import DeepgramTranscriber
-            return DeepgramTranscriber(audio_queue, api_key=dg_key,
-                                       language=args.lang)
+            return DeepgramTranscriber(
+                audio_queue, api_key=dg_key, language=args.lang,
+                endpointing_ms=int(_cfg_value("endpointing_ms", 300)),
+                keyterms=_cfg_value("keyterms", []))
         except Exception as e:
             print(f"[engine] Deepgram no disponible ({e}); probando siguiente.")
             engine = "groq" if gq_key else "local"
