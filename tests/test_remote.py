@@ -63,11 +63,18 @@ def fake_translator(target, keys, tone):
     return t
 
 
+def failing_translator(target, keys, tone):
+    t = LiveTranslator(target=target, groq_key="", tone=tone)
+    def boom(text, src): raise RuntimeError("bloqueado")
+    t._google, t._mymemory = boom, boom
+    return t
+
+
 class ServerThread:
-    def __init__(self, cfg, port=0):
+    def __init__(self, cfg, port=0, translator=None):
         cfg.port = port
         self.cfg = cfg
-        self.server = srv.LiveServer(cfg, srv.Factories(transcriber=FakeTranscriber, translator=fake_translator,
+        self.server = srv.LiveServer(cfg, srv.Factories(transcriber=FakeTranscriber, translator=translator or fake_translator,
                                                        synth=FakeSynth))
         self.loop = asyncio.new_event_loop()
         self.port = None
@@ -189,6 +196,14 @@ class Flow(Base):
         self.assertTrue(wait_for(lambda: c.connected)); self.audio(c, 4)
         self.assertTrue(wait_for(lambda: c.ev["dub"], 6)); time.sleep(0.6)
         self.assertEqual(c.ev["gate"], [])
+
+    def test_translation_failure_is_reported_instead_of_failing_silently(self):
+        self.s.stop()
+        self.s = ServerThread(self.cfg, translator=failing_translator); self.addCleanup(self.s.stop)
+        c = self.client(target="es"); self.assertTrue(wait_for(lambda: c.connected)); self.audio(c, 4)
+        self.assertTrue(wait_for(lambda: any(t[1] == "hello world." for t in c.ev["trans"])))      # se ve el original…
+        self.assertTrue(wait_for(lambda: any("No pude traducir" in n for n in c.ev["notice"])))     # …y se avisa por qué
+        self.assertEqual(sum("No pude traducir" in n for n in c.ev["notice"]), 1)                   # sin spam
 
     def test_glossary_reload(self):
         c = self.client(target="es")

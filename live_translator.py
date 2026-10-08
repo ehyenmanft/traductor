@@ -25,6 +25,9 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 FAST_MODEL = "llama-3.1-8b-instant"
 BIG_MODEL = "llama-3.3-70b-versatile"
 
+_MYMEMORY = {"es": "es-ES", "en": "en-US", "pt": "pt-PT", "fr": "fr-FR", "de": "de-DE",
+             "it": "it-IT", "ja": "ja-JP", "ko": "ko-KR", "zh-cn": "zh-CN", "ru": "ru-RU"}
+
 LANG_NAMES = {
     "es": "Spanish", "en": "English", "pt": "Portuguese", "fr": "French",
     "de": "German", "it": "Italian", "ja": "Japanese", "ko": "Korean",
@@ -75,6 +78,7 @@ class LiveTranslator:
         self._fail_until = 0.0
         self._fails = 0
         self._lock = threading.Lock()
+        self.on_problem = None            # on_problem(mensaje): una frase NO se pudo traducir
         mode = "Groq (contexto + streaming)" if self.groq_key else "Google Translate"
         print(f"[translator] Modo {mode} · tono: {TONES[self.tone][0]}")
 
@@ -193,6 +197,32 @@ class LiveTranslator:
         out = GoogleTranslator(source="auto", target=tgt).translate(protected)
         return self._restore(out or "", slots)
 
+    def _mymemory(self, text: str, src: str) -> str:
+        """Tercer respaldo (gratuito, sin clave) por si Google bloquea la IP del servidor."""
+        from deep_translator import MyMemoryTranslator
+        if src not in _MYMEMORY or self.target not in _MYMEMORY:
+            raise RuntimeError("MyMemory necesita un idioma de origen conocido")
+        protected, slots = self._protect(text)
+        out = MyMemoryTranslator(source=_MYMEMORY[src], target=_MYMEMORY[self.target]).translate(protected)
+        return self._restore(out or "", slots)
+
+    def _problem(self, errors: list[str]):
+        """Avisa (a la interfaz) de por qué no se pudo traducir, con una causa corta y accionable."""
+        joined = " | ".join(errors)
+        if not self.groq_key:
+            cause = "falta groq_api_key y Google no responde"
+        elif "401" in joined or "403" in joined:
+            cause = "clave de Groq rechazada (401/403)"
+        elif "429" in joined:
+            cause = "Groq saturado (429)"
+        else:
+            cause = "Groq y Google no responden"
+        if self.on_problem:
+            try:
+                self.on_problem(f"⚠️ No pude traducir: {cause}")
+            except Exception:  # noqa: BLE001
+                pass
+
     # ---------- API ----------
 
     def translate_partial(self, text: str, src: str) -> str:
@@ -230,7 +260,7 @@ class LiveTranslator:
         if key in self._cache:
             return self._cache[key]
 
-        result = ""
+        result, errors = "", []
         if self.groq_ok:
             for model in self.final_models:
                 if model in self._dead_models:
@@ -241,18 +271,29 @@ class LiveTranslator:
                         self._fails = 0
                         break
                     result = ""
+                    errors.append(f"{model}: respuesta vacía")
                 except Exception as e:  # noqa: BLE001
-                    print(f"[translator] {model}: {type(e).__name__}")
+                    errors.append(f"{model}: {type(e).__name__}: {str(e)[:140]}")
+                    print(f"[translator] {errors[-1]}")
                     self._groq_failed()
                     if not self.groq_ok:
                         break
-        if not result:
+        elif self.groq_key:
+            errors.append("Groq en pausa (4 fallos seguidos)")
+        for name, fn in (("Google", self._google), ("MyMemory", self._mymemory)):
+            if result:
+                break
             try:
-                result = self._google(text, src)
-                if _bad(result):
-                    result = ""
+                out = fn(text, src)
+                if _bad(out):
+                    errors.append(f"{name}: respuesta vacía")
+                else:
+                    result = out
             except Exception as e:  # noqa: BLE001
-                print(f"[translator] Google: {type(e).__name__}")
+                errors.append(f"{name}: {type(e).__name__}: {str(e)[:140]}")
+                print(f"[translator] {errors[-1]}")
+        if not result:
+            self._problem(errors)
         result = result or text
         with self._lock:
             self.context.append((text, result))

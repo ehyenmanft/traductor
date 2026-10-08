@@ -218,6 +218,31 @@ class Tunnel(unittest.TestCase):
             self.assertEqual(tn.find_key("$MI_CARPETA/k.pem" if os.name != "nt" else "%MI_CARPETA%/k.pem", tempfile.mkdtemp()), key)
             self.assertEqual(tn.find_key("~/k.pem", tempfile.mkdtemp()), key)
 
+    def test_prepare_key_survives_second_launch_with_readonly_copy(self):
+        """Regresión: el 2.º arranque fallaba con 'Permission denied' al sobrescribir la copia protegida."""
+        src = os.path.join(tempfile.mkdtemp(), "k.pem"); open(src, "w").write("CLAVE-1")
+        dest_dir = os.path.join(tempfile.mkdtemp(), "x")
+        first = tn.prepare_key(src, dest_dir)
+        os.chmod(first, 0o400)                                          # como la deja icacls: solo lectura
+        self.assertEqual(tn.prepare_key(src, dest_dir), first)           # idéntica: se reutiliza sin tocarla
+        open(src, "w").write("CLAVE-2")                                  # cambió la clave: se reemplaza
+        again = tn.prepare_key(src, dest_dir)
+        self.assertEqual(open(again).read(), "CLAVE-2")
+        # y si Windows no deja ni borrar ni sobrescribir la copia, usa otro nombre en vez de morir
+        open(src, "w").write("CLAVE-3")
+        real_remove = os.remove
+        def deny(p, *a, **k):
+            if os.path.basename(p) == "clave_aws.pem":
+                raise PermissionError(13, "Permission denied", p)
+            return real_remove(p, *a, **k)
+        with mock.patch.object(tn.os, "remove", deny), mock.patch.object(tn.os, "chmod", lambda *a, **k: None):
+            third = tn.prepare_key(src, dest_dir)
+        self.assertNotEqual(os.path.basename(third), "clave_aws.pem")
+        self.assertEqual(open(third).read(), "CLAVE-3")
+        # el siguiente arranque, ya sin el bloqueo, limpia la copia de nombre alternativo
+        fourth = tn.prepare_key(src, dest_dir)
+        self.assertEqual(open(fourth).read(), "CLAVE-3")
+
     @unittest.skipIf(sys.platform == "win32", "permisos POSIX")
     def test_prepare_key_copies_with_private_permissions(self):
         src = os.path.join(tempfile.mkdtemp(), "orig.pem"); open(src, "w").write("CLAVE"); os.chmod(src, 0o644)

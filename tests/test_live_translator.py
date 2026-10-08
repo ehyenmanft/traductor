@@ -99,6 +99,32 @@ class Translator(unittest.TestCase):
             self.assertEqual(t.translate_final("Join Black Mesa", "en"), "Únete a Black Mesa")
         self.assertEqual(t.translate_partial("hi", "en") or "", t.translate_partial("hi", "en") or "")
 
+    def test_total_failure_reports_the_cause_once_and_keeps_original(self):
+        probs = []
+        t = make(); t.on_problem = probs.append
+        def post(*a, **k): raise RuntimeError("401 Client Error: Unauthorized for url: https://api.groq.com/x")
+        with mock.patch.object(lt.requests, "post", post), mock.patch.object(t, "_google", side_effect=RuntimeError("bloqueado")), \
+             mock.patch.object(t, "_mymemory", side_effect=RuntimeError("caído")):
+            out = t.translate_final("hello", "en")
+        self.assertEqual(out, "hello")                                   # sin traducción: queda el original…
+        self.assertEqual(len(probs), 1); self.assertIn("rechazada", probs[0])      # …pero AVISA, con la causa
+        probs.clear(); t2 = lt.LiveTranslator(target="es", groq_key=""); t2.on_problem = probs.append
+        with mock.patch.object(t2, "_google", side_effect=RuntimeError("x")), mock.patch.object(t2, "_mymemory", side_effect=RuntimeError("y")):
+            t2.translate_final("hello", "en")
+        self.assertIn("falta groq_api_key", probs[0])
+        probs.clear(); t3 = make(); t3.on_problem = probs.append
+        with mock.patch.object(lt.requests, "post", side_effect=RuntimeError("429 Too Many Requests")), \
+             mock.patch.object(t3, "_google", side_effect=RuntimeError("x")), mock.patch.object(t3, "_mymemory", side_effect=RuntimeError("y")):
+            t3.translate_final("hello", "en")
+        self.assertIn("saturado", probs[0])
+
+    def test_no_problem_reported_when_something_works(self):
+        probs = []
+        t = lt.LiveTranslator(target="es", groq_key=""); t.on_problem = probs.append
+        with mock.patch.object(t, "_google", side_effect=RuntimeError("bloqueado")), mock.patch.object(t, "_mymemory", return_value="Hola mundo"):
+            self.assertEqual(t.translate_final("hello world", "en"), "Hola mundo")      # MyMemory salva la frase
+        self.assertEqual(probs, [])
+
     def test_partial_failure_does_not_call_google_when_groq_configured(self):
         t = make()
         g = mock.Mock(return_value="G")

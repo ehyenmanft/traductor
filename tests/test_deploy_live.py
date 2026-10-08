@@ -67,6 +67,22 @@ class Light(unittest.TestCase):
                          "import live_server as s; s.Factories()\n")
 
 
+class CheckTranslation(unittest.TestCase):
+    def test_diagnostic_script_never_prints_the_key_and_reports_failure(self):
+        d = tempfile.mkdtemp(); keys = os.path.join(d, "k.json"); live = os.path.join(d, "live_config.json")
+        with open(keys, "w") as f:
+            json.dump({"deepgram_api_key": "dg", "groq_api_key": "gsk_SECRETO_NO_DEBE_SALIR_123"}, f)
+        with open(live, "w") as f:
+            json.dump({"keys_file": keys, "token": "t"}, f)
+        env = {**os.environ, "HTTPS_PROXY": "http://127.0.0.1:1", "HTTP_PROXY": "http://127.0.0.1:1"}   # sin red: todo falla rápido
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "deploy_live", "check_translation.py")],
+                           capture_output=True, text=True, cwd=d, env=env, timeout=120)
+        self.assertNotIn("gsk_SECRETO", r.stdout + r.stderr)             # nunca imprime la clave
+        self.assertIn("configurada (", r.stdout)
+        self.assertIn("Groq llama-3.3-70b-versatile", r.stdout); self.assertIn("MyMemory", r.stdout)
+        self.assertIn("NINGÚN traductor funciona", r.stdout); self.assertEqual(r.returncode, 1)
+
+
 @unittest.skipUnless(all(__import__("importlib").util.find_spec(m) for m in ("websockets", "websocket", "numpy")), "sin dependencias del servidor")
 class SelfCheck(unittest.TestCase):
     def test_selfcheck_script_against_a_real_server(self):

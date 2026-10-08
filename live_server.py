@@ -22,6 +22,7 @@ import logging
 import os
 import queue
 import threading
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -134,6 +135,8 @@ class Session:
         st = self.settings
         self.transcriber = factories.transcriber(self.audio_q, keys, st["lang"])
         self.translator = factories.translator(st["target"], keys, st["tone"])
+        self.translator.on_problem = self._translation_problem
+        self._last_problem = 0.0
         self.worker = LiveTranslationWorker(
             self.translator, lambda uid, text: self.emit({"type": "trans", "uid": uid, "text": text}),
             self.stop, translate_partials=bool(keys.get("translate_partials", True)),
@@ -163,6 +166,14 @@ class Session:
             self.out.put_nowait(item)
         except asyncio.QueueFull:
             log.warning("cola de salida llena: descartado un mensaje")
+
+    def _translation_problem(self, message: str):
+        """La frase salió sin traducir: se avisa en el overlay (como mucho cada 20 s) para que no falle en silencio."""
+        now = time.monotonic()
+        if now - self._last_problem >= 20:
+            self._last_problem = now
+            log.warning("traducción fallida: %s", message)
+            self.emit({"type": "notice", "message": message})
 
     # ---------- pipeline ----------
 

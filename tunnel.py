@@ -62,21 +62,65 @@ def find_key(spec: str, base_dir: str) -> str:
                             f"La busqué también en la carpeta del programa ({base_dir}).")
 
 
+def _protect(path: str):
+    """Deja el archivo legible SOLO para el usuario actual (OpenSSH lo exige)."""
+    if sys.platform == "win32":
+        user = os.environ.get("USERNAME", "")
+        subprocess.run(["icacls", path, "/inheritance:r"], capture_output=True)
+        if user:
+            subprocess.run(["icacls", path, "/grant:r", f"{user}:R"], capture_output=True)
+    else:
+        os.chmod(path, 0o600)
+
+
+def _unprotect_and_remove(path: str) -> bool:
+    """Borra una copia anterior aunque se haya dejado de solo lectura (el 2.º arranque fallaba aquí)."""
+    try:
+        os.remove(path)
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        pass
+    try:                                                    # devolverle el control al usuario y reintentar
+        if sys.platform == "win32":
+            user = os.environ.get("USERNAME", "")
+            if user:
+                subprocess.run(["icacls", path, "/grant:r", f"{user}:F"], capture_output=True)
+        else:
+            os.chmod(path, 0o600)
+        os.remove(path)
+        return True
+    except OSError:
+        return False
+
+
 def prepare_key(path: str, dest_dir: str) -> str:
     """OpenSSH de Windows rechaza claves legibles por otros usuarios ("UNPROTECTED PRIVATE KEY
-    FILE"). Se usa una COPIA con permisos solo para ti; el archivo original no se toca."""
+    FILE"). Se usa una COPIA con permisos solo para ti; el archivo original no se toca.
+
+    Es idempotente: si la copia ya existe y es idéntica se reutiliza tal cual; si cambió la clave se
+    reemplaza; y si no se puede escribir encima se usa un nombre distinto (nunca debe impedir arrancar)."""
     if not os.path.isfile(path):
         raise FileNotFoundError(f"No encuentro la clave SSH: {path}")
     os.makedirs(dest_dir, exist_ok=True)
+    with open(path, "rb") as f:
+        data = f.read()
     dest = os.path.join(dest_dir, "clave_aws.pem")
-    shutil.copyfile(path, dest)
-    if sys.platform == "win32":
-        user = os.environ.get("USERNAME", "")
-        subprocess.run(["icacls", dest, "/inheritance:r"], capture_output=True)
-        if user:
-            subprocess.run(["icacls", dest, "/grant:r", f"{user}:R"], capture_output=True)
-    else:
-        os.chmod(dest, 0o600)
+    try:
+        with open(dest, "rb") as f:
+            if f.read() == data:
+                return dest                                 # ya está lista (y protegida) de un arranque anterior
+    except OSError:
+        pass
+    if not _unprotect_and_remove(dest):
+        dest = os.path.join(dest_dir, f"clave_aws_{os.getpid()}.pem")   # no se pudo reemplazar: nombre nuevo
+    with open(dest, "wb") as f:
+        f.write(data)
+    _protect(dest)
+    for old in glob.glob(os.path.join(dest_dir, "clave_aws_*.pem")):    # limpieza de copias de arranques anteriores
+        if old != dest:
+            _unprotect_and_remove(old)
     return dest
 
 
