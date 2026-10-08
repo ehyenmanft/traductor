@@ -12,7 +12,7 @@ Flujo:
   3. Debajo del resultado: "✏️ Editar texto" (corriges el .srt y lo reenvías)
      y "🎨 Cambiar estilo y repetir" (sin volver a transcribir).
 
-Comandos: /glosario /conservar /reiniciar /ayuda
+Comandos: /glosario /conservar /almacenamiento /reiniciar /ayuda
 
 Configuración (variables de entorno o config.json junto al script):
   TELEGRAM_BOT_TOKEN  / "telegram_bot_token"   (de @BotFather)
@@ -304,6 +304,106 @@ async def _purge_task(ctx: ContextTypes.DEFAULT_TYPE):
     _purge_orphans()
 
 
+LOCAL_MEDIA_DIRS = {"videos", "documents", "animations", "video_notes", "photos",
+                    "audios", "voice", "temp"}
+
+
+def _fmt(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def dir_size(path: str) -> int:
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def _local_media_files(data_dir: str):
+    """Archivos de descargas del servidor local (no toca su base de datos)."""
+    for root, _, files in os.walk(data_dir):
+        if os.path.basename(root) in LOCAL_MEDIA_DIRS:
+            for f in files:
+                yield os.path.join(root, f)
+
+
+def _active_dirs(app) -> set[str]:
+    bd = app.bot_data
+    return {j["dir"] for j in bd.get("jobs", {}).values()} | set(bd.get("inflight", set()))
+
+
+def storage_report(app) -> str:
+    bd = app.bot_data
+    total, used, free = shutil.disk_usage("/")
+    pct = 100 * used / total
+    active = _active_dirs(app)
+    mine = glob.glob(os.path.join(tempfile.gettempdir(), "trad_*"))
+    act = [d for d in mine if d in active]
+    orph = [d for d in mine if d not in active]
+    lines = ["💾 Almacenamiento del servidor",
+             f"{bar(pct)}",
+             f"Usado {_fmt(used)} de {_fmt(total)} · libres {_fmt(free)}", "",
+             f"🗂️ Temporales del bot: {len(mine)} carpeta(s) · {_fmt(sum(map(dir_size, mine)))}",
+             f"   • de videos abiertos (editar/repetir): {len(act)} · {_fmt(sum(map(dir_size, act)))}",
+             f"   • huérfanas: {len(orph)} · {_fmt(sum(map(dir_size, orph)))}"]
+    data_dir = bd.get("tg_data_dir")
+    if data_dir and os.path.isdir(data_dir):
+        media = sum(os.path.getsize(f) for f in _local_media_files(data_dir) if os.path.exists(f))
+        lines.append(f"📥 Servidor local de Telegram: {_fmt(dir_size(data_dir))} "
+                     f"(descargas borrables: {_fmt(media)})")
+    lines.append(f"\n⏱️ Los videos abiertos caducan solos a los {JOB_TTL // 60} min.")
+    return "\n".join(lines)
+
+
+def clean_storage(app) -> dict:
+    """Borra temporales que no estén en uso. Devuelve un resumen."""
+    bd = app.bot_data
+    jobs: dict = bd.setdefault("jobs", {})
+    freed = dirs = files = skipped = 0
+    for jid in list(jobs):
+        job = jobs[jid]
+        if job["busy"]:
+            skipped += 1
+            continue
+        freed += dir_size(job["dir"])
+        shutil.rmtree(job["dir"], ignore_errors=True)
+        jobs.pop(jid, None)
+        dirs += 1
+    keep = _active_dirs(app)
+    for d in glob.glob(os.path.join(tempfile.gettempdir(), "trad_*")):
+        if d not in keep:
+            freed += dir_size(d)
+            shutil.rmtree(d, ignore_errors=True)
+            dirs += 1
+    data_dir = bd.get("tg_data_dir")
+    if data_dir and os.path.isdir(data_dir):
+        for f in list(_local_media_files(data_dir)):
+            try:
+                freed += os.path.getsize(f)
+                os.remove(f)
+                files += 1
+            except OSError:
+                pass
+    return dict(freed=freed, dirs=dirs, files=files, skipped=skipped)
+
+
+def storage_keyboard(confirm: bool = False) -> InlineKeyboardMarkup:
+    if confirm:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Sí, borrar", callback_data="s|yes"),
+            InlineKeyboardButton("✖️ No", callback_data="s|no")]])
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🧹 Borrar temporales", callback_data="s|ask"),
+        InlineKeyboardButton("🔄 Actualizar", callback_data="s|refresh")]])
+
+
 def _drop_job(jobs: dict, job_id: int):
     job = jobs.pop(job_id, None)
     if job:
@@ -393,11 +493,50 @@ HELP = (
     "• doblaje con voz IA\n"
     "• ⭐ plantillas propias\n\n"
     "Después del resultado: ✏️ editar el texto y 🎨 repetir con otro estilo.\n\n"
-    "Comandos: /glosario hola=hello · /conservar Nombre · /reiniciar · /ayuda")
+    "Comandos: /glosario hola=hello · /conservar Nombre · /almacenamiento · /reiniciar · /ayuda")
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(HELP + f"\n\nTu id de Telegram: {update.effective_user.id}")
+
+
+async def cmd_storage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await authorized(update, ctx):
+        return
+    text = await asyncio.to_thread(storage_report, ctx.application)
+    await update.message.reply_text(text, reply_markup=storage_keyboard())
+
+
+async def _on_storage_button(q, ctx: ContextTypes.DEFAULT_TYPE, action: str):
+    users = ctx.application.bot_data["allowed"]
+    uname = (q.from_user.username or "").lower()
+    if users and q.from_user.id not in users and uname not in users:
+        await q.answer("No autorizado.", show_alert=True)
+        return
+    app = ctx.application
+    if action == "ask":
+        await q.answer()
+        n = len(app.bot_data.get("jobs", {}))
+        await q.message.edit_text(
+            f"⚠️ ¿Borrar los temporales?\n\nSe eliminan los videos guardados de {n} menú(s) "
+            "abierto(s) (ya no podrás editar/repetir esos videos) y las descargas del servidor "
+            "local. No se tocan los videos que se están procesando.\n\n"
+            + await asyncio.to_thread(storage_report, app),
+            reply_markup=storage_keyboard(confirm=True))
+        return
+    note = ""
+    if action == "yes":
+        res = await asyncio.to_thread(clean_storage, app)
+        note = (f"🧹 Listo: liberé {_fmt(res['freed'])} ({res['dirs']} carpeta(s), "
+                f"{res['files']} archivo(s) del servidor local)."
+                + (f" Omití {res['skipped']} en proceso." if res["skipped"] else "") + "\n\n")
+    await q.answer("Actualizado" if action != "yes" else "Borrado")
+    try:
+        await q.message.edit_text(note + await asyncio.to_thread(storage_report, app),
+                                  reply_markup=storage_keyboard())
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            raise
 
 
 async def cmd_glossary(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -466,6 +605,8 @@ async def _start_job(update: Update, ctx: ContextTypes.DEFAULT_TYPE, fetch, firs
     _purge_jobs(jobs)
     status = await msg.reply_text(first_text)
     workdir = tempfile.mkdtemp(prefix="trad_")
+    inflight: set = ctx.application.bot_data.setdefault("inflight", set())
+    inflight.add(workdir)          # protegida mientras se descarga/prepara
     try:
         _check_disk(need_bytes)
         src = await fetch(workdir, status)
@@ -493,6 +634,8 @@ async def _start_job(update: Update, ctx: ContextTypes.DEFAULT_TYPE, fetch, firs
         log.exception("fallo preparando video")
         shutil.rmtree(workdir, ignore_errors=True)
         await status.edit_text(f"❌ No pude preparar el video: {str(e)[:400]}")
+    finally:
+        inflight.discard(workdir)
 
 
 async def on_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -559,6 +702,9 @@ async def on_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     parts = q.data.split("|")
+    if parts[0] == "s":                   # panel de almacenamiento (no ligado a un video)
+        await _on_storage_button(q, ctx, parts[1])
+        return
     jobs = ctx.application.bot_data.get("jobs", {})
     job = jobs.get(int(parts[1])) if len(parts) > 1 else None
     if job is None:
@@ -781,7 +927,13 @@ def build_app() -> Application:
     persistence = PicklePersistence(
         filepath=os.path.join(APP_DIR, "bot_state.pickle"), update_interval=30,
         store_data=PersistenceInput(bot_data=False, chat_data=False, callback_data=False))
-    b = Application.builder().token(token).persistence(persistence)
+    async def post_init(application: Application):    # menú "/" de Telegram
+        await application.bot.set_my_commands([
+            ("start", "Ayuda y tu id"), ("almacenamiento", "Ver espacio y borrar temporales"),
+            ("glosario", "Términos fijos de traducción"), ("conservar", "No traducir un término"),
+            ("reiniciar", "Restablecer el estilo guardado")])
+
+    b = Application.builder().token(token).persistence(persistence).post_init(post_init)
     if api_url:
         b = b.base_url(api_url.rstrip("/") + "/bot").base_file_url(
             api_url.rstrip("/") + "/file/bot").local_mode(True)
@@ -789,6 +941,8 @@ def build_app() -> Application:
     app.bot_data.update(dg_key=dg_key, groq_key=_cfg("GROQ_API_KEY", "groq_api_key"),
                         allowed=allowed_users(), sem=asyncio.Semaphore(1),
                         local_api=bool(api_url),
+                        tg_data_dir=(_cfg("TELEGRAM_DATA_DIR", "telegram_data_dir",
+                                          "/var/lib/telegram-bot-api") if api_url else ""),
                         # con servidor local el límite de subida es de ~2 GB
                         send_mb=1900 if api_url else SEND_LIMIT_MB,
                         upload_timeout=3600 if api_url else 300,
@@ -801,6 +955,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("glosario", cmd_glossary))
     app.add_handler(CommandHandler("conservar", cmd_keep))
     app.add_handler(CommandHandler("reiniciar", cmd_reset))
+    app.add_handler(CommandHandler(["almacenamiento", "espacio", "storage"], cmd_storage))
     app.add_handler(MessageHandler(
         filters.VIDEO | filters.VIDEO_NOTE | filters.ANIMATION |
         filters.Document.VIDEO, on_video))

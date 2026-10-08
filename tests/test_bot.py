@@ -140,6 +140,57 @@ class BotFlow(unittest.IsolatedAsyncioTestCase):
         await tb._start_job(update, self.ctx, fetch, "x")
         self.assertIn("máximo", status.edit_text.await_args.args[0])
 
+    def _storage_env(self):
+        tmp = tempfile.mkdtemp()
+        data = tempfile.mkdtemp()
+        orphan = os.path.join(tmp, "trad_orphan"); os.makedirs(orphan); open(orphan + "/v.mp4", "wb").write(b"x" * 5000)
+        inflight = os.path.join(tmp, "trad_inflight"); os.makedirs(inflight); open(inflight + "/v.mp4", "wb").write(b"x" * 100)
+        busy = os.path.join(tmp, "trad_busy"); os.makedirs(busy); open(busy + "/v.mp4", "wb").write(b"x" * 100)
+        idle = os.path.join(tmp, "trad_idle"); os.makedirs(idle); open(idle + "/v.mp4", "wb").write(b"x" * 3000)
+        os.makedirs(data + "/tok/videos"); os.makedirs(data + "/tok/documents")
+        open(data + "/tok/videos/f.mp4", "wb").write(b"x" * 7000); open(data + "/tok/documents/a.srt", "wb").write(b"x" * 10)
+        open(data + "/tok/td.binlog", "wb").write(b"estado")
+        bd = self.ctx.application.bot_data
+        bd["jobs"] = {5: dict(user=1, dir=busy, busy=True, created=time.time()),
+                      6: dict(user=1, dir=idle, busy=False, created=time.time())}
+        bd["inflight"] = {inflight}; bd["tg_data_dir"] = data
+        return tmp, data, dict(orphan=orphan, inflight=inflight, busy=busy, idle=idle)
+
+    async def test_storage_report_and_clean(self):
+        tmp, data, d = self._storage_env()
+        with mock.patch.object(tb.tempfile, "gettempdir", return_value=tmp):
+            text = tb.storage_report(self.ctx.application)
+            self.assertIn("Almacenamiento", text); self.assertIn("huérfanas: 1", text)
+            self.assertIn("Servidor local de Telegram", text); self.assertIn("▰", text + "▰") 
+            res = tb.clean_storage(self.ctx.application)
+        self.assertFalse(os.path.exists(d["orphan"])); self.assertFalse(os.path.exists(d["idle"]))
+        self.assertTrue(os.path.exists(d["busy"])); self.assertTrue(os.path.exists(d["inflight"]))   # en uso: intactas
+        self.assertFalse(os.path.exists(data + "/tok/videos/f.mp4")); self.assertFalse(os.path.exists(data + "/tok/documents/a.srt"))
+        self.assertTrue(os.path.exists(data + "/tok/td.binlog"))                                    # estado intacto
+        self.assertEqual((res["files"], res["skipped"]), (2, 1))
+        self.assertGreaterEqual(res["freed"], 5000 + 3000 + 7000)
+        self.assertEqual(list(self.ctx.application.bot_data["jobs"]), [5])
+
+    async def test_storage_command_and_buttons(self):
+        tmp, data, d = self._storage_env()
+        update = MagicMock(); update.effective_user.id = 1
+        update.message.reply_text = AsyncMock()
+        with mock.patch.object(tb.tempfile, "gettempdir", return_value=tmp):
+            await tb.cmd_storage(update, self.ctx)
+            kb = update.message.reply_text.await_args.kwargs["reply_markup"]
+            self.assertEqual([b.callback_data for b in kb.inline_keyboard[0]], ["s|ask", "s|refresh"])
+            q = await self.press("s|ask")
+            self.assertIn("¿Borrar", q.message.edit_text.await_args.args[0])
+            self.assertTrue(os.path.exists(d["orphan"]))                       # aún no se borra
+            q = await self.press("s|yes")
+            self.assertIn("Listo: liberé", q.message.edit_text.await_args.args[0])
+            self.assertFalse(os.path.exists(d["orphan"]))
+            q = await self.press("s|no")
+        self.ctx.application.bot_data["allowed"] = {99}                         # usuario no autorizado
+        q = make_query("s|yes", user=1)
+        await tb.on_button(MagicMock(callback_query=q), self.ctx)
+        self.assertTrue(q.answer.await_args.kwargs["show_alert"])
+
     async def test_low_disk_rejected(self):
         update = MagicMock(); update.effective_user.id = 1
         status = make_query("x").message

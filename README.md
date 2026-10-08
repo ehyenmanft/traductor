@@ -190,3 +190,7 @@ Mientras se procesa, el mensaje muestra una **barra con porcentaje y tiempo tran
 - Con el servidor local de Telegram, el video recibido se **mueve** (no se copia) a la carpeta del bot, y los `.srt` se borran tras leerse.
 - Red de seguridad: `deploy/cleanup.sh` corre por cron cada 30 min (`deploy/install_cleanup.sh`, lo instala `update.sh`) y borra descargas del servidor local de más de 60 min y carpetas `/tmp/trad_*` de más de 4 h, sin tocar el estado interno de Telegram.
 - Antes de aceptar un video comprueba que haya espacio en disco, y los logs de Docker rotan (3 × 10 MB).
+
+### 💾 Almacenamiento desde Telegram
+
+`/almacenamiento` (también `/espacio`) muestra el disco del servidor (usado/libre con barra), los temporales del bot (de videos abiertos y huérfanos) y las descargas del servidor local de Telegram. El botón **🧹 Borrar temporales** pide confirmación y elimina lo que no está en uso: nunca toca videos que se están procesando ni descargando, ni el estado interno de Telegram.

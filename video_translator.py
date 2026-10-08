@@ -79,22 +79,23 @@ def _run_progress(cmd: list[str], cwd: str | None = None, duration: float = 0.0,
                   on_frac=None):
     """Ejecuta ffmpeg informando el avance real (según el tiempo ya codificado)."""
     full = [cmd[0], "-nostats", "-loglevel", "error", "-progress", "pipe:1"] + cmd[1:]
-    proc = subprocess.Popen(full, cwd=cwd, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True)
     tail: list[str] = []
-    for line in proc.stdout:
-        line = line.strip()
-        if line.startswith(("out_time_us=", "out_time_ms=")):
-            try:
-                us = int(line.split("=", 1)[1])
-            except ValueError:
-                continue            # "N/A" al comienzo
-            if duration and on_frac and us >= 0:
-                on_frac(min(1.0, us / 1e6 / duration))
-        elif line and not _KV.match(line):
-            tail.append(line)
-            tail = tail[-12:]
-    if proc.wait() != 0:
+    with subprocess.Popen(full, cwd=cwd, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True) as proc:
+        for line in proc.stdout:
+            line = line.strip()
+            if line.startswith(("out_time_us=", "out_time_ms=")):
+                try:
+                    us = int(line.split("=", 1)[1])
+                except ValueError:
+                    continue            # "N/A" al comienzo
+                if duration and on_frac and us >= 0:
+                    on_frac(min(1.0, us / 1e6 / duration))
+            elif line and not _KV.match(line):
+                tail.append(line)
+                tail = tail[-12:]
+        code = proc.wait()
+    if code != 0:
         raise RuntimeError(f"{cmd[0]} falló: " + " | ".join(tail)[-800:])
     if on_frac:
         on_frac(1.0)
