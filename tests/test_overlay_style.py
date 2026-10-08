@@ -35,7 +35,7 @@ def jload(path):
         return json.load(f)
 
 
-def pixels(img: QImage, pred):
+def pixels(img, pred):
     return sum(1 for y in range(img.height()) for x in range(img.width()) if pred(img.pixelColor(x, y)))
 
 
