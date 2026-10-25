@@ -53,6 +53,8 @@ def build(cfg: dict, app: QApplication, no_tunnel: bool = False, capture_factory
     """Crea todas las piezas del cliente y las conecta (sin entrar al bucle de Qt ni arrancar red)."""
     token = str(cfg.get("token", "")).strip()
     url = str(cfg.get("server", "ws://127.0.0.1:8765")).strip()
+    while url.lower().startswith(("wss://wss://", "ws://ws://")):        # dirección pegada sobre un prefijo ya escrito
+        url = url.split("//", 1)[1]
     if not token:
         raise ClientError(f"Falta el token en {config_path or 'config.json'}.\n\n"
                           f"Agrega:\n{{\"token\": \"…\", \"server\": \"{url}\"}}")

@@ -127,6 +127,9 @@ class ClientApp(unittest.TestCase):
         c = client_main.build({"server": "wss://3-147-64-254.sslip.io", "token": TOKEN}, _APP,
                               capture_factory=FakeCapture, player=FakePlayer())
         self.assertIsNone(c.tunnel); c.shutdown()
+        c = client_main.build({"server": "wss://wss://3-147-129-93.sslip.io", "token": TOKEN}, _APP,   # prefijo duplicado al pegar
+                              capture_factory=FakeCapture, player=FakePlayer())
+        self.assertEqual(c.session.url, "wss://3-147-129-93.sslip.io"); c.shutdown()
 
     def test_ssh_section_builds_tunnel_but_not_with_no_tunnel(self):
         key = os.path.join(tempfile.mkdtemp(), "k.pem"); open(key, "w").close()

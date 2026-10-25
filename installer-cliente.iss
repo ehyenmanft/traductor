@@ -63,7 +63,14 @@ begin
     'Si ya lo tenías instalado, déjalos vacíos para conservar los actuales.');
   ConnPage.Add('Servidor:', False);
   ConnPage.Add('Token:', True);
-  ConnPage.Values[0] := 'wss://';
+end;
+
+{ quien pega la dirección completa sobre un "wss://" ya escrito deja "wss://wss://…" }
+function CleanServer(S: String): String;
+begin
+  S := Trim(S);
+  while Pos('wss://wss://', Lowercase(S)) = 1 do Delete(S, 1, 6);
+  Result := S;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -72,9 +79,9 @@ var
 begin
   Result := True;
   if CurPageID <> ConnPage.ID then Exit;
-  Server := Trim(ConnPage.Values[0]);
+  Server := CleanServer(ConnPage.Values[0]);
   Token := Trim(ConnPage.Values[1]);
-  if ((Server = '') or (Server = 'wss://')) and (Token = '') and FileExists(ConfigPath) then Exit;
+  if (Server = '') and (Token = '') and FileExists(ConfigPath) then Exit;
   if (Pos('wss://', Lowercase(Server)) <> 1) or (Length(Server) < 10) then begin
     MsgBox('La dirección del servidor debe empezar por wss://', mbError, MB_OK);
     Result := False;
@@ -96,7 +103,7 @@ var
   Server, Token: String;
 begin
   if CurStep <> ssPostInstall then Exit;
-  Server := Trim(ConnPage.Values[0]);
+  Server := CleanServer(ConnPage.Values[0]);
   Token := Trim(ConnPage.Values[1]);
   if Token = '' then Exit;                       { actualización: se conserva el config.json actual }
   SaveStringToFile(ConfigPath,
