@@ -26,16 +26,31 @@ LANG_NAMES = {
 }
 
 
+MYMEMORY_LANGS = {
+    "es": "es-ES",
+    "en": "en-US",
+    "pt": "pt-BR",
+    "fr": "fr-FR",
+    "de": "de-DE",
+    "it": "it-IT",
+    "ja": "ja-JP",
+    "ko": "ko-KR",
+    "zh": "zh-CN",
+    "zh-cn": "zh-CN",
+    "ru": "ru-RU",
+}
+
+
 class Translator:
     def __init__(self, target_language: str = "es", groq_api_key: str | None = None):
         self.target = target_language.lower().strip()
         self.groq_key = (groq_api_key or os.environ.get("GROQ_API_KEY", "")).strip()
-        self._cache: dict[tuple[str, str, str], str] = {}
+        self._cache: dict[tuple[str, str, str], tuple[str, str]] = {}
         self._groq_failures = 0
         if self.groq_key:
             print(f"[translator] Modo Gamer activo con Groq ({GROQ_MODEL})")
         else:
-            print("[translator] Modo estándar activo con Google Translate")
+            print("[translator] Motor de traducción listo (Google Direct + MyMemory)")
 
     def set_target(self, target_language: str):
         target = target_language.lower().strip()
@@ -78,55 +93,110 @@ class Translator:
         content = re.sub(r'^["\'«]+|["\'»]+$', '', content).strip()
         return content
 
-    def _translate_google(self, text: str, src: str, target: str) -> str:
+    def _translate_google_direct(self, text: str, src: str, target: str) -> tuple[str, str]:
+        """Traducción directa y ligera vía Google Translate API (cliente extensión Chrome).
+        No sufre bloqueo HTTP 429 como el scraping HTML y detecta el idioma origen."""
+        for host in ("clients5.google.com", "translate.googleapis.com"):
+            try:
+                url = f"https://{host}/translate_a/t"
+                params = {
+                    "client": "dict-chrome-ex",
+                    "sl": src if src != "auto" else "auto",
+                    "tl": target,
+                    "q": text,
+                }
+                headers = {
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                    ),
+                }
+                resp = requests.get(url, params=params, headers=headers, timeout=3.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list) and data:
+                        if isinstance(data[0], list):
+                            trans = "".join(part[0] for part in data if isinstance(part, list) and part)
+                            det_lang = data[0][1] if len(data[0]) > 1 and data[0][1] else src
+                            return trans.strip(), det_lang.lower().strip()
+                        elif isinstance(data[0], str):
+                            return data[0].strip(), src
+            except Exception:
+                continue
+        return "", ""
+
+    def _translate_mymemory(self, text: str, src: str, target: str) -> str:
         try:
-            res = GoogleTranslator(source="auto", target=target).translate(text)
-            if res and not any(err in res.lower() for err in ["error 500", "server error", "<html"]):
-                return res
+            from deep_translator import MyMemoryTranslator
+            s = MYMEMORY_LANGS.get(src, "en-US")
+            t = MYMEMORY_LANGS.get(target, "es-ES")
+            res = MyMemoryTranslator(source=s, target=t).translate(text)
+            if res and not any(err in res.lower() for err in ["error 500", "server error", "mymemory warning"]):
+                return res.strip()
         except Exception:
             pass
+        return ""
 
+    def _translate_google_legacy(self, text: str, src: str, target: str) -> str:
         try:
-            res = GoogleTranslator(source=src, target=target).translate(text)
+            res = GoogleTranslator(source=src if src != "auto" else "auto", target=target).translate(text)
             if res and not any(err in res.lower() for err in ["error 500", "server error", "<html"]):
-                return res
+                return res.strip()
         except Exception:
             pass
+        return ""
 
-        return text
-
-    def translate(self, text: str, source_language: str) -> str:
+    def translate(self, text: str, source_language: str = "auto") -> tuple[str, str]:
+        """Traduce el texto y devuelve (texto_traducido, idioma_detectado)."""
         text = text.strip()
         if not text:
-            return ""
+            return "", source_language
 
         src = (source_language or "auto").lower().strip()
         target = self.target
-        if src == target:
-            return text  # ya está en el idioma destino
+
+        # Si ya sabemos con certeza que está en el idioma destino
+        if src != "auto" and src == target:
+            return text, src
 
         key = (src, target, text)
         if key in self._cache:
             return self._cache[key]
 
         result = ""
+        detected_lang = src
+
         # 1. Intentar con Groq Gamer si hay clave disponible
         if self.groq_key and self._groq_failures < 4:
             try:
                 result = self._translate_groq(text, src, target)
                 self._groq_failures = 0
-            except Exception as e:
+            except Exception:
                 self._groq_failures += 1
                 result = ""
 
-        # 2. Fallback a Google Translate si no hay resultado
+        # 2. Motor prioritario: Google Direct (rápido, sin 429, detecta idioma)
         if not result:
-            result = self._translate_google(text, src, target)
+            res_trans, res_det = self._translate_google_direct(text, src, target)
+            if res_trans:
+                result = res_trans
+                if res_det and res_det != "auto":
+                    detected_lang = res_det
+
+        # 3. Fallback a MyMemory
+        if not result:
+            result = self._translate_mymemory(text, detected_lang, target)
+
+        # 4. Fallback legado
+        if not result:
+            result = self._translate_google_legacy(text, src, target)
 
         result = result or text
+        out = (result, detected_lang)
 
         # Guardar en caché
         if len(self._cache) > 1000:
             self._cache.clear()
-        self._cache[key] = result
-        return result
+        self._cache[key] = out
+        return out
+

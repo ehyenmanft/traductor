@@ -33,6 +33,15 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 
+copy /y "traductor.ico" "dist\TraductorEnVivo\" >nul
+if not exist "dist\TraductorEnVivo\config.json" (
+    if exist "config.json" (
+        copy /y "config.json" "dist\TraductorEnVivo\" >nul
+    ) else (
+        copy /y "config.example.json" "dist\TraductorEnVivo\config.json" >nul
+    )
+)
+
 echo.
 echo [OK] Listo: dist\TraductorEnVivo\TraductorEnVivo.exe
 echo Siguiente paso: compilar installer.iss con Inno Setup.

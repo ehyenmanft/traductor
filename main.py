@@ -71,7 +71,7 @@ def build_transcriber(args, audio_queue):
 class Bridge(QObject):
     """Puente thread → hilo de UI de Qt."""
     upsert = pyqtSignal(int, str, str, bool)  # uid, original, idioma, final
-    set_trans = pyqtSignal(int, str)          # uid, traducción
+    set_trans = pyqtSignal(int, str, str)     # uid, traducción, idioma_detectado
     hotkey = pyqtSignal(str)                  # "f6".."f10" desde hook global
 
 
@@ -228,8 +228,8 @@ class TranslationWorker:
             if item is None:
                 continue
             uid, text, lang = item
-            translated = self.translator.translate(text, lang)
-            self.bridge.set_trans.emit(uid, translated)
+            translated, det_lang = self.translator.translate(text, lang)
+            self.bridge.set_trans.emit(uid, translated, det_lang or lang)
             time.sleep(self.min_interval)  # respeto de rate-limit
 
 
@@ -241,8 +241,8 @@ def pipeline(transcriber: StreamingTranscriber, translator: Translator,
         except queue.Empty:
             continue
         bridge.upsert.emit(seg.utterance_id, seg.text, seg.language, seg.is_final)
-        if seg.language == translator.target:
-            bridge.set_trans.emit(seg.utterance_id, seg.text)
+        if seg.language == translator.target and seg.language != "auto":
+            bridge.set_trans.emit(seg.utterance_id, seg.text, seg.language)
         else:
             worker.submit(seg.utterance_id, seg.text, seg.language)
 

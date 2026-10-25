@@ -54,7 +54,11 @@ class DeepgramTranscriber:
     def _majority_lang(self) -> str:
         if not self._utt_langs:
             return "auto"
-        return max(set(self._utt_langs), key=self._utt_langs.count)
+        # Normalizar códigos como 'en-US' -> 'en'
+        normalized = [l.split("-")[0].lower() for l in self._utt_langs if l]
+        if not normalized:
+            return "auto"
+        return max(set(normalized), key=normalized.count)
 
     def handle_message(self, msg: dict):
         if msg.get("type") != "Results":
@@ -66,6 +70,12 @@ class DeepgramTranscriber:
         text = (alt.get("transcript") or "").strip()
         langs = [w.get("language") for w in alt.get("words", [])
                  if w.get("language")]
+        if not langs and alt.get("languages"):
+            langs = [l for l in alt.get("languages") if l]
+        if not langs and alt.get("detected_language"):
+            langs = [alt.get("detected_language")]
+        if not langs and msg.get("channel", {}).get("detected_language"):
+            langs = [msg["channel"]["detected_language"]]
 
         if msg.get("is_final"):
             if text:
@@ -88,13 +98,12 @@ class DeepgramTranscriber:
 
         if current and current != self._last_partial:
             self._last_partial = current
+            if langs:
+                self._utt_langs.extend(langs)
             self.text_queue.put(TranscriptSegment(
                 self._uid, current,
-                self._majority_lang() if self._utt_langs or langs else "auto",
+                self._majority_lang(),
                 1.0, is_final=False))
-            if langs:
-                # recordar idiomas vistos también en interinos
-                self._utt_langs.extend(langs)
 
     # ---------- red ----------
 

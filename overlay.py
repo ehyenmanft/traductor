@@ -463,10 +463,13 @@ class TranslationOverlay(QWidget):
         self._wake()
         self._refresh()
 
-    def set_translation(self, uid: int, translated: str):
+    def set_translation(self, uid: int, translated: str, detected_lang: str = ""):
         for e in reversed(self.entries):
             if e["id"] == uid:
                 e["trans"] = translated
+                if detected_lang and detected_lang != "auto":
+                    if e.get("lang") == "auto" or not e.get("lang"):
+                        e["lang"] = detected_lang
                 break
         self._wake()
         self._refresh()
