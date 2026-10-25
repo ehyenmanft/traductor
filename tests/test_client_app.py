@@ -119,6 +119,15 @@ class ClientApp(unittest.TestCase):
             client_main.build({"server": "ws://x"}, _APP, capture_factory=FakeCapture, player=FakePlayer(), config_path="C:\\x\\config.json")
         self.assertIn("Falta el token", str(cm.exception)); self.assertIn("config.json", str(cm.exception))
 
+    def test_public_server_must_use_wss(self):
+        with self.assertRaises(client_main.ClientError) as cm:
+            client_main.build({"server": "ws://3.147.64.254:8765", "token": TOKEN}, _APP,
+                              capture_factory=FakeCapture, player=FakePlayer())
+        self.assertIn("wss://", str(cm.exception))
+        c = client_main.build({"server": "wss://3-147-64-254.sslip.io", "token": TOKEN}, _APP,
+                              capture_factory=FakeCapture, player=FakePlayer())
+        self.assertIsNone(c.tunnel); c.shutdown()
+
     def test_ssh_section_builds_tunnel_but_not_with_no_tunnel(self):
         key = os.path.join(tempfile.mkdtemp(), "k.pem"); open(key, "w").close()
         cfg = {"token": TOKEN, "ssh": {"host": "1.2.3.4", "user": "ubuntu", "key": key, "local_port": 9999}}

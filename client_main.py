@@ -7,12 +7,14 @@ Configuración (config.json junto al .exe):
   {"server": "ws://127.0.0.1:8765", "token": "…",
    "ssh": {"host": "IP-DE-AWS", "user": "ubuntu", "key": "C:\\ruta\\clave.pem"}}
 Con la sección "ssh" el cliente abre solo el túnel cifrado hacia AWS.
+Sin túnel (usuarios invitados): {"server": "wss://IP.sslip.io", "token": "…"} (HTTPS con Caddy en AWS).
 """
 import argparse
 import json
 import os
 import sys
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 from apppath import app_dir
 
@@ -54,6 +56,10 @@ def build(cfg: dict, app: QApplication, no_tunnel: bool = False, capture_factory
     if not token:
         raise ClientError(f"Falta el token en {config_path or 'config.json'}.\n\n"
                           f"Agrega:\n{{\"token\": \"…\", \"server\": \"{url}\"}}")
+    host = urlsplit(url).hostname or ""
+    if url.startswith("ws://") and host not in ("127.0.0.1", "localhost", "::1"):
+        raise ClientError(f"El servidor {url} no va cifrado: el token viajaría a la vista.\n\n"
+                          f"Usa la dirección que empieza por wss:// en {config_path or 'config.json'}.")
     icon_path = os.path.join(app_dir(), "traductor.ico")
 
     overlay = TranslationOverlay()
