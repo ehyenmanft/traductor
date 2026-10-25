@@ -39,3 +39,10 @@ Thumbs.db
 .DS_Store
 .venv-bot/
 bot_state.pickle
+
+# Servidor en vivo (AWS): tokens, uso y entorno propio
+live_config.json
+live_config.json.tmp
+usage.json
+usage.json.tmp
+.venv-live/
