@@ -62,7 +62,7 @@ PY
 echo "==> Comprobando HTTPS (el certificado puede tardar ~30 s la primera vez)..."
 ok=""
 for _ in $(seq 1 12); do
-  if .venv-live/bin/python - "wss://$DOMAIN" <<'PY'
+  if .venv-live/bin/python - "wss://$DOMAIN" 2>/dev/null <<'PY'   # mientras sale el certificado falla: sin ruido
 import json, sys, websocket
 cfg = json.load(open("live_config.json"))
 ws = websocket.create_connection(sys.argv[1], timeout=8)
