@@ -19,6 +19,8 @@ import websocket  # websocket-client
 
 import live_protocol as P
 
+RECV_TIMEOUT = 30.0      # > ping del servidor (20 s): solo salta si la conexión está muerta de verdad
+
 
 class RemoteSession:
     def __init__(self, url: str, token: str, audio_queue: "queue.Queue", settings: dict | None = None,
@@ -112,6 +114,9 @@ class RemoteSession:
                 continue
             msg = P.decode(raw)
             if msg["type"] == "ready":
+                # sin subtítulos en un silencio no hay mensajes: con el timeout de 10 s del saludo se
+                # reconectaba cada ~11 s. El servidor manda ping cada 20 s, así que 30 s = conexión muerta
+                ws.settimeout(RECV_TIMEOUT)
                 return ws
             if msg["type"] == "error":
                 ws.close()

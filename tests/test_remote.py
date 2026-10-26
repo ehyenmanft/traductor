@@ -273,6 +273,15 @@ class Resilience(Base):
         self.assertTrue(wait_for(lambda: any(t[1] == "ES:hello world." for t in c.ev["trans"])))
         self.assertIn("reconnecting", c.ev["status"])
 
+    def test_silence_longer_than_10s_does_not_reconnect(self):
+        """Regresión: el timeout de 10 s del saludo se quedaba en la escucha y se reconectaba cada ~11 s."""
+        c = self.client(); self.assertTrue(wait_for(lambda: c.connected))
+        time.sleep(12)                                        # sin audio ni mensajes del servidor
+        self.assertTrue(c.connected); self.assertEqual(self.s.server.sessions_started, 1)
+        self.assertNotIn("reconnecting", c.ev["status"])
+        self.audio(c)
+        self.assertTrue(wait_for(lambda: any(t[1] == "ES:hello world." for t in c.ev["trans"])))
+
     def test_session_time_limit_allows_reconnect(self):
         self.cfg.max_session_minutes = 0.02          # ≈ 1.2 s
         c = self.client()
