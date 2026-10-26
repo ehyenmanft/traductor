@@ -50,6 +50,7 @@ AVAILABLE_LANGUAGES = [
 class TranslationOverlay(QWidget):
     language_changed = pyqtSignal(str)
     dub_toggle_requested = pyqtSignal()     # F11 / botón: alternar doblaje de voz
+    pause_toggled = pyqtSignal(bool)        # botón ⏸/▶: True = pausado (no se manda audio a las APIs)
 
     def __init__(self, width: int | None = None, opacity: int | None = None, target_lang: str = "es"):
         super().__init__()
@@ -90,7 +91,7 @@ class TranslationOverlay(QWidget):
         # ---------- Cintillo superior ----------
         self.bar = QHBoxLayout()
         self.bar.setContentsMargins(0, 0, 0, 2)
-        self.bar.setSpacing(4)
+        self.bar.setSpacing(3)                     # que quepan en 440 px
 
         self.title = self._label("🎙 Traductor en vivo", "#9be8ff",
                                  max(9, self.font_size - 3), italic=True)
@@ -104,13 +105,12 @@ class TranslationOverlay(QWidget):
 
         def _btn(text, tip, slot):
             b = QPushButton(text)
-            b.setFixedHeight(22)
-            b.setMinimumWidth(24)
+            b.setFixedSize(26, 26)                 # círculo (con border-radius:13px)
             b.setToolTip(tip)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setStyleSheet(
                 "QPushButton{color:#c8d0dc;background:rgba(255,255,255,18);"
-                "border:none;border-radius:4px;font-size:11px;padding:2px 4px;}"
+                "border:none;border-radius:13px;font-size:13px;padding:0;}"
                 "QPushButton:hover{background:rgba(255,255,255,60);"
                 "color:#ffffff;}")
             b.clicked.connect(slot)
@@ -119,10 +119,15 @@ class TranslationOverlay(QWidget):
 
         # Botón selector de idioma rápido
         self.btn_lang = _btn(f"🌐 {self.target_lang.upper()}", "Cambiar idioma destino", self.open_language_menu)
+        self.btn_lang.setFixedWidth(56)            # píldora: lleva texto
         self.btn_lang.setStyleSheet(
             "QPushButton{color:#9be8ff;background:rgba(0,180,255,25);"
-            "border:1px solid rgba(0,180,255,50);border-radius:4px;font-size:11px;font-weight:bold;padding:1px 6px;}"
+            "border:1px solid rgba(0,180,255,50);border-radius:13px;font-size:12px;font-weight:bold;padding:0 10px;}"
             "QPushButton:hover{background:rgba(0,180,255,65);color:#ffffff;}")
+
+        self.paused = False
+        self.btn_pause = _btn("⏸", "", self.toggle_pause)
+        self._style_pause()
 
         self.btn_style = _btn("🎨", "Personalizar estilo (fuente, colores, contorno, posición…)",
                               self.open_style_dialog)
@@ -152,7 +157,7 @@ class TranslationOverlay(QWidget):
                               self.close_app)
         self.btn_close.setStyleSheet(
             "QPushButton{color:#c8d0dc;background:rgba(255,255,255,18);"
-            "border:none;border-radius:4px;font-size:11px;padding:2px 4px;}"
+            "border:none;border-radius:13px;font-size:13px;padding:0;}"
             "QPushButton:hover{background:rgba(220,60,60,200);"
             "color:#ffffff;}")
         self.layout.addLayout(self.bar)
@@ -290,14 +295,14 @@ class TranslationOverlay(QWidget):
             self.btn_gaming.setToolTip("Modo actual: Subtítulos Gaming HUD (F6 para volver a Historial)")
             self.btn_gaming.setStyleSheet(
                 "QPushButton{color:#ffe066;background:rgba(255,200,0,40);"
-                "border:1px solid rgba(255,200,0,100);border-radius:4px;font-size:11px;padding:2px 4px;}"
+                "border:1px solid rgba(255,200,0,100);border-radius:13px;font-size:13px;padding:0;}"
                 "QPushButton:hover{background:rgba(255,200,0,80);color:#ffffff;}")
         else:
             self.btn_gaming.setText("💬")
             self.btn_gaming.setToolTip("Modo actual: Historial Completo (F6 para modo Subtítulos Gaming)")
             self.btn_gaming.setStyleSheet(
                 "QPushButton{color:#c8d0dc;background:rgba(255,255,255,18);"
-                "border:none;border-radius:4px;font-size:11px;padding:2px 4px;}"
+                "border:none;border-radius:13px;font-size:13px;padding:0;}"
                 "QPushButton:hover{background:rgba(255,255,255,60);color:#ffffff;}")
 
     def set_dub_state(self, on: bool):
@@ -307,14 +312,14 @@ class TranslationOverlay(QWidget):
             self.btn_dub.setToolTip("Doblaje de voz: ACTIVO (F11 para apagar)")
             self.btn_dub.setStyleSheet(
                 "QPushButton{color:#7dffb2;background:rgba(0,220,120,45);"
-                "border:1px solid rgba(0,220,120,110);border-radius:4px;font-size:11px;padding:2px 4px;}"
+                "border:1px solid rgba(0,220,120,110);border-radius:13px;font-size:13px;padding:0;}"
                 "QPushButton:hover{background:rgba(0,220,120,90);color:#ffffff;}")
         else:
             self.btn_dub.setText("🔇")
             self.btn_dub.setToolTip("Doblaje de voz: apagado (F11 para encender)")
             self.btn_dub.setStyleSheet(
                 "QPushButton{color:#c8d0dc;background:rgba(255,255,255,18);"
-                "border:none;border-radius:4px;font-size:11px;padding:2px 4px;}"
+                "border:none;border-radius:13px;font-size:13px;padding:0;}"
                 "QPushButton:hover{background:rgba(255,255,255,60);color:#ffffff;}")
 
     # ---------- Idioma Destino ----------
@@ -387,8 +392,30 @@ class TranslationOverlay(QWidget):
             + ("ACTIVO" if self.recording else "PAUSADO"))
         self.btn_rec.setStyleSheet(
             f"QPushButton{{color:{color};background:rgba(255,255,255,18);"
-            "border:none;border-radius:4px;font-size:11px;padding:2px 4px;}"
+            "border:none;border-radius:13px;font-size:13px;padding:0;}"
             "QPushButton:hover{background:rgba(255,255,255,60);}")
+
+    def _style_pause(self):
+        if self.paused:
+            self.btn_pause.setText("▶️")
+            self.btn_pause.setToolTip("En pausa: no se envía audio a las APIs (clic para continuar)")
+            self.btn_pause.setStyleSheet(
+                "QPushButton{color:#ffb86b;background:rgba(255,140,0,55);"
+                "border:1px solid rgba(255,140,0,140);border-radius:13px;font-size:13px;padding:0;}"
+                "QPushButton:hover{background:rgba(255,140,0,100);color:#ffffff;}")
+        else:
+            self.btn_pause.setText("⏸")
+            self.btn_pause.setToolTip("Pausar: deja de enviar audio a las APIs (sin gasto)")
+            self.btn_pause.setStyleSheet(
+                "QPushButton{color:#c8d0dc;background:rgba(255,255,255,18);"
+                "border:none;border-radius:13px;font-size:13px;padding:0;}"
+                "QPushButton:hover{background:rgba(255,255,255,60);color:#ffffff;}")
+
+    def toggle_pause(self):
+        self.paused = not self.paused
+        self._style_pause()
+        self._flash("⏸ En pausa: sin envío de audio" if self.paused else "▶ Traducción reanudada")
+        self.pause_toggled.emit(self.paused)
 
     def toggle_recording(self):
         self.recording = not self.recording

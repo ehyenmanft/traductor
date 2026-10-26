@@ -29,7 +29,8 @@ from overlay import TranslationOverlay
 from tunnel import SshTunnel, find_key, prepare_key
 
 STATUS_TEXT = {"connecting": "🔌 Conectando con AWS…", "connected": "✅ Conectado con AWS",
-               "reconnecting": "⚠️ Sin conexión; reconectando…"}
+               "reconnecting": "⚠️ Sin conexión; reconectando…",
+               "paused": "⏸ En pausa: sin conexión ni gasto de APIs"}
 
 
 def load_config(path: str) -> dict:
@@ -118,6 +119,14 @@ def build(cfg: dict, app: QApplication, no_tunnel: bool = False, capture_factory
         overlay._flash("🔊 Doblaje de voz: ACTIVADO" if on else "🔇 Doblaje de voz: apagado")
 
     overlay.dub_toggle_requested.connect(_toggle_dub)
+
+    def _on_pause(paused: bool):
+        capture.set_paused(paused)
+        session.set_paused(paused)
+        if paused:
+            dub_player.stop_current()
+
+    overlay.pause_toggled.connect(_on_pause)
 
     tunnel = None
     ssh = cfg.get("ssh") if isinstance(cfg.get("ssh"), dict) else None

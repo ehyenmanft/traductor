@@ -167,6 +167,7 @@ def main():
         overlay._flash("🔊 Doblaje de voz: ACTIVADO" if on else "🔇 Doblaje de voz: apagado")
 
     overlay.dub_toggle_requested.connect(_toggle_dub)
+    overlay.pause_toggled.connect(capture.set_paused)   # sin audio: Deepgram solo recibe KeepAlive (no se cobra)
 
     if setup_global_hotkeys(bridge):
         overlay.disable_local_shortcuts()

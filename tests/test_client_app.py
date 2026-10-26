@@ -29,6 +29,7 @@ class FakeCapture:
     def start(self): self.started = True
     def stop(self): self.stopped = True
     def set_muted(self, m): self.muted_log.append(bool(m))
+    def set_paused(self, p): self.paused = bool(p)
 
 
 class FakePlayer:
@@ -76,6 +77,26 @@ class ClientApp(unittest.TestCase):
         self.assertEqual(e1["trans"], "ya en español")
         c.overlay._render()                                   # y se pinta sin errores
         self.assertIn("ES:hello world.", c.overlay.text.toPlainText() + "".join(l["segs"][0][0] for l in c.overlay.sub._lines) )
+
+    def test_pause_button_stops_api_use_and_resume_translates_again(self):
+        c = self.make()
+        self.assertTrue(qwait_until(lambda: c.session.connected))
+        self.assertEqual((c.overlay.btn_pause.width(), c.overlay.btn_pause.height()), (26, 26))   # redondo
+        c.overlay.btn_pause.click()                                                                # ⏸
+        self.assertTrue(self.cap.paused and c.session.paused); self.assertEqual(c.overlay.btn_pause.text(), "▶️")
+        self.assertTrue(qwait_until(lambda: not c.session.connected and not self.s.server.sessions))  # sesión cerrada
+        for _ in range(6):                                    # audio que se colara: se descarta, no se manda
+            self.cap.audio_queue.put(np.full(1600, 0.1, dtype=np.float32))
+        QTest.qWait(1200)
+        self.assertEqual(self.s.server.sessions_started, 1)   # no reconectó durante la pausa
+        self.assertTrue(self.cap.audio_queue.empty()); self.assertEqual(len(c.overlay.entries), 0)
+        self.assertIn("principal", self.s.server.usage.get(self.s.server._today(), {}))   # el cupo dejó de correr
+        c.overlay.btn_pause.click()                                                                # ▶
+        self.assertFalse(self.cap.paused or c.session.paused); self.assertEqual(c.overlay.btn_pause.text(), "⏸")
+        self.assertTrue(qwait_until(lambda: c.session.connected and self.s.server.sessions_started == 2))
+        for _ in range(4):
+            self.cap.audio_queue.put(np.full(1600, 0.1, dtype=np.float32))
+        self.assertTrue(qwait_until(lambda: c.overlay.entries and c.overlay.entries[0]["trans"] == "ES:hello world."))
 
     def test_language_tone_and_hotkey_reach_the_server(self):
         c = self.make()

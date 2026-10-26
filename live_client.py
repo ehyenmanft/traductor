@@ -30,6 +30,7 @@ class RemoteSession:
                        dub=on_dub, gate=on_gate, dub_stop=on_dub_stop, fatal=on_fatal)
         self.max_backoff = max_backoff
         self._stop = threading.Event()
+        self._paused = threading.Event()      # en pausa no hay sesión: ni Deepgram ni cupo corriendo
         self._ws = None
         self._thread: threading.Thread | None = None
         self.connected = False
@@ -49,6 +50,17 @@ class RemoteSession:
                 ws.close(timeout=1)
             except Exception:  # noqa: BLE001
                 pass
+
+    @property
+    def paused(self) -> bool:
+        return self._paused.is_set()
+
+    def set_paused(self, paused: bool):
+        """Pausa: cierra la sesión con el servidor (deja de gastar APIs). Reanudar: vuelve a conectar."""
+        if paused:
+            self._paused.set()
+        else:
+            self._paused.clear()
 
     def send_set(self, **kw):
         """Cambia ajustes en el servidor; se recuerdan para el saludo si hay que reconectar."""
@@ -108,6 +120,11 @@ class RemoteSession:
     def _run(self):
         backoff = 1.0
         while not self._stop.is_set():
+            if self._paused.is_set():
+                self._call("status", "paused")
+                while self._paused.is_set() and not self._stop.is_set():
+                    self._sleep(0.2)
+                continue
             self._call("status", "connecting")
             try:
                 ws = self._connect()
@@ -132,7 +149,7 @@ class RemoteSession:
             rt.start()
             try:
                 self._drain_audio()                   # nada de audio viejo tras reconectar
-                while not self._stop.is_set() and alive.is_set():
+                while not self._stop.is_set() and alive.is_set() and not self._paused.is_set():
                     try:
                         chunk = self.audio_queue.get(timeout=0.3)
                     except queue.Empty:
@@ -149,6 +166,8 @@ class RemoteSession:
                     pass
             if self.fatal or self._stop.is_set():
                 return
+            if self._paused.is_set():
+                continue                              # cierre pedido por la pausa: no es un corte
             self._call("status", "reconnecting")
             self._sleep(backoff)
 
