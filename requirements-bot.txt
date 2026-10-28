@@ -3,3 +3,4 @@ deep-translator>=1.11.4
 requests>=2.31
 edge-tts>=6.1.9
 yt-dlp
+Pillow>=10

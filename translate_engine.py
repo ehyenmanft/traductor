@@ -18,12 +18,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
+import groq_models
 from subtitle_ass import censor_text, norm_lang
 from subtitle_style import LANGUAGES, TONES, Segment
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODELS = [m for m in (os.environ.get("GROQ_MODEL", ""), "llama-3.3-70b-versatile",
-                           "llama-3.1-8b-instant") if m]
 BATCH = 20
 
 LANG_NAMES = {"es": "Spanish", "en": "English", "pt": "Portuguese", "fr": "French",
@@ -99,25 +98,13 @@ def _system_prompt(target: str, tone: str, glossary: dict[str, str]) -> str:
 def _groq_batch(key: str, lines: list[tuple[int, str, str]], target: str,
                 tone: str, glossary: dict[str, str]) -> dict[int, str]:
     payload_lines = [{"id": i, "lang": src, "text": text} for i, src, text in lines]
-    last_err = None
-    for model in GROQ_MODELS:
-        try:
-            r = requests.post(
-                GROQ_URL, timeout=45,
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": model, "temperature": 0.2, "max_tokens": 4096,
-                      "response_format": {"type": "json_object"},
-                      "messages": [
-                          {"role": "system", "content": _system_prompt(target, tone, glossary)},
-                          {"role": "user", "content": json.dumps({"lines": payload_lines}, ensure_ascii=False)}]})
-            r.raise_for_status()
-            data = json.loads(r.json()["choices"][0]["message"]["content"])
-            out = {int(t["id"]): str(t["text"]).strip() for t in data["translations"]}
-            return {i: t for i, t in out.items() if not _bad(t)}
-        except Exception as e:  # noqa: BLE001 — se prueba el siguiente modelo
-            last_err = e
-            time.sleep(1.0)
-    raise RuntimeError(f"Groq: {type(last_err).__name__}: {str(last_err)[:150]}")
+    raw = groq_models.chat(
+        key, [{"role": "system", "content": _system_prompt(target, tone, glossary)},
+              {"role": "user", "content": json.dumps({"lines": payload_lines}, ensure_ascii=False)}],
+        max_tokens=4096, json_mode=True, timeout=60)
+    data = json.loads(raw)
+    out = {int(t["id"]): str(t["text"]).strip() for t in data["translations"]}
+    return {i: t for i, t in out.items() if not _bad(t)}
 
 
 # ----------------------------------------------------------- orquestación

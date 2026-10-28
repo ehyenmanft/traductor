@@ -96,6 +96,53 @@ class BotFlow(unittest.IsolatedAsyncioTestCase):
         q = await self.press("re|1")
         q.message.reply_photo.assert_awaited()
 
+    async def content(self, action, q=None):
+        q = q or make_query(f"ct|1|{action}")
+        status = MagicMock(); status.edit_text = AsyncMock(); status.delete = AsyncMock(); status.photo = None
+        q.message.reply_text = AsyncMock(return_value=status)
+        self.ctx.bot.send_media_group = AsyncMock(); self.ctx.bot.send_photo = AsyncMock()
+        await tb.on_button(MagicMock(callback_query=q), self.ctx)
+        return q, status
+
+    async def translated(self):
+        with mock.patch.object(te, "_google", side_effect=lambda t, s, g: "TRAD " + t):
+            self.job["style"] = vt.apply_preset(vt.SubtitleStyle(target="fr"), "beast")
+            await self.press("go|1")
+        self.ctx.bot.send_video.reset_mock()
+
+    async def test_content_buttons_are_under_the_result_and_need_a_result_first(self):
+        q, _ = await self.content("reel")
+        self.assertTrue(q.answer.await_args.kwargs["show_alert"])                  # aún no hay video traducido
+        await self.translated()
+        # (el teclado del resultado se envió en el paso anterior; reconstruirlo aquí es la misma función)
+        import bot_content as bc
+        data = [b.callback_data for row in bc.content_rows(1) for b in row]
+        self.assertEqual(data, [f"ct|1|{k}" for k in ("reel", "reelc", "cuts", "clips", "car", "caps", "thumb")])
+        self.assertTrue(all(len(d.encode()) <= 64 for d in data + ["ct|999999|car:calido"]))
+
+    async def test_content_reel_clips_cuts_thumbnail_carousel(self):
+        await self.translated()
+        for action, sender in (("reel", "send_video"), ("reelc", "send_video"), ("clips", "send_video")):
+            self.ctx.bot.send_video.reset_mock()
+            _, status = await self.content(action)
+            getattr(self.ctx.bot, sender).assert_awaited(); status.delete.assert_awaited()
+            self.assertFalse(self.job["busy"])
+        _, status = await self.content("cuts")                                    # el tono es continuo: nada que cortar
+        self.assertIn("silencios", status.edit_text.await_args.args[0])
+        _, status = await self.content("thumb")
+        self.ctx.bot.send_photo.assert_awaited()
+        q, _ = await self.content("car")                                          # primero pregunta el estilo
+        q.message.reply_text.assert_awaited()
+        _, status = await self.content("car:neon")
+        self.ctx.bot.send_media_group.assert_awaited()
+        self.assertGreaterEqual(len(self.ctx.bot.send_media_group.await_args.args[1]), 2)
+
+    async def test_content_text_pack_without_groq_key_explains(self):
+        await self.translated()
+        _, status = await self.content("caps")
+        self.assertIn("groq_api_key", " ".join(str(c) for c in status.edit_text.await_args_list))
+        self.assertFalse(self.job["busy"])                                         # un error no deja el menú bloqueado
+
     async def test_same_language_returns_menu(self):
         self.job["tr"] = vt.Transcription([vt.Segment(0, 1, "hola", "es")], self.job["info"])
         q = await self.press("go|1")

@@ -198,3 +198,9 @@ Mientras se procesa, el mensaje muestra una **barra con porcentaje y tiempo tran
 ### 💾 Almacenamiento desde Telegram
 
 `/almacenamiento` (también `/espacio`) muestra el disco del servidor (usado/libre con barra), los temporales del bot (de videos abiertos y huérfanos) y las descargas del servidor local de Telegram. El botón **🧹 Borrar temporales** pide confirmación y elimina lo que no está en uso: nunca toca videos que se están procesando ni descargando, ni el estado interno de Telegram.
+
+### Crear contenido desde el bot (reels, clips, carrusel)
+Debajo de cada video traducido aparecen botones: 📱 Reel 9:16 (fondo difuminado) o con recorte (subtítulos rehechos para vertical),
+✂️ Sin silencios, 🎞 Clips de 55 s, 🖼 Carrusel (4 estilos, imágenes 1080×1350 con las ideas del video), 📝 Títulos y hashtags
+y 🖼 Miniatura. Los textos usan Groq (`groq_api_key`); sin clave el carrusel reparte las frases. Opcional: `"handle": "@tuusuario"`
+en `config.json` para firmar las diapositivas.

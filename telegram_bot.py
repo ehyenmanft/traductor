@@ -43,6 +43,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
                           ContextTypes, MessageHandler, PersistenceInput,
                           PicklePersistence, filters)
 
+import bot_content
 from fetch import download_url, extract_url
 from video_translator import (ALIGN, ANIMS, BGS, COLORS, DUBS, FONTS, HIGHLIGHTS,
                               HPOS, LANGUAGES, LOOK_FIELDS, ORIG_VOLS, OUTLINES,
@@ -492,7 +493,8 @@ HELP = (
     "• tono de traducción, glosario, solo transcribir\n"
     "• doblaje con voz IA\n"
     "• ⭐ plantillas propias\n\n"
-    "Después del resultado: ✏️ editar el texto y 🎨 repetir con otro estilo.\n\n"
+    "Después del resultado: ✏️ editar el texto, 🎨 repetir con otro estilo y 🎬 crear contenido: "
+    "📱 reel 9:16, ✂️ quitar silencios, 🎞 clips de 55 s, 🖼 carrusel, 📝 títulos y hashtags, miniatura.\n\n"
     "Comandos: /glosario hola=hello · /conservar Nombre · /almacenamiento · /reiniciar · /ayuda")
 
 
@@ -800,6 +802,11 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ctx.application.bot_data.setdefault("edit_msgs", {})[sent.message_id] = job_id
         return
 
+    if kind == "ct":                      # creación de contenido: reel, cortes, carrusel…
+        await bot_content.on_content(q, ctx, job, job_id, parts[2] if len(parts) > 2 else "",
+                                     Progress, _set_status)
+        return
+
     if kind == "go":
         job["busy"] = True
         await q.answer("Procesando…")
@@ -875,13 +882,15 @@ async def run_job(ctx: ContextTypes.DEFAULT_TYPE, msg, job_id: int, job: dict,
         progress.pct = 99
         await _set_status(msg, f"📤 Subiendo resultado…\n{bar(99)}  ⏱ {_elapsed(progress.t0)}")
         await bot.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
+        job["result"] = result.video_path
         langs = ", ".join(LANGUAGES.get(l, l) for l in result.languages) or "?"
         caption = f"✅ Listo. Idioma(s) detectado(s): {langs} → {LANGUAGES[st.target]}"
         if result.warnings:
             caption += "\n⚠️ " + " ".join(result.warnings)
         buttons = InlineKeyboardMarkup([[
             InlineKeyboardButton("🎨 Cambiar estilo y repetir", callback_data=f"re|{job_id}"),
-            InlineKeyboardButton("✏️ Editar texto", callback_data=f"ed|{job_id}")]])
+            InlineKeyboardButton("✏️ Editar texto", callback_data=f"ed|{job_id}")]]
+            + bot_content.content_rows(job_id))
         with open(result.video_path, "rb") as f:
             await bot.send_video(chat_id, f, caption=caption[:1000],
                                  supports_streaming=True, read_timeout=bd["upload_timeout"],
@@ -941,6 +950,7 @@ def build_app() -> Application:
     app.bot_data.update(dg_key=dg_key, groq_key=_cfg("GROQ_API_KEY", "groq_api_key"),
                         allowed=allowed_users(), sem=asyncio.Semaphore(1),
                         local_api=bool(api_url),
+                        handle=_cfg("CONTENT_HANDLE", "handle"),
                         tg_data_dir=(_cfg("TELEGRAM_DATA_DIR", "telegram_data_dir",
                                           "/var/lib/telegram-bot-api") if api_url else ""),
                         # con servidor local el límite de subida es de ~2 GB
