@@ -103,3 +103,21 @@ class SelfCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ListarBots(unittest.TestCase):
+    def test_lists_bot_folders_and_never_prints_secrets(self):
+        home = tempfile.mkdtemp()
+        os.makedirs(os.path.join(home, "claudia")); os.makedirs(os.path.join(home, "otro"))
+        for f in ("claudia/bot.py", "claudia/requirements.txt", "otro/index.js", "otro/package.json"):
+            open(os.path.join(home, f), "w").close()
+        with open(os.path.join(home, "claudia", ".env"), "w") as fh:
+            fh.write("TOKEN=SECRETO123\n")
+        with open(os.path.join(home, "claudia", "config.json"), "w") as fh:
+            fh.write('{"telegram_bot_token": "SECRETO456"}')
+        r = subprocess.run(["bash", os.path.join(ROOT, "deploy", "listar_bots.sh")], capture_output=True, text=True,
+                           env={**os.environ, "HOME": home}, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("claudia", r.stdout); self.assertIn("python", r.stdout); self.assertIn("node", r.stdout)
+        self.assertIn("skills    : ninguna", r.stdout)
+        self.assertNotIn("SECRETO", r.stdout + r.stderr)
