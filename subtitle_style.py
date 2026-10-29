@@ -6,6 +6,9 @@ SubtitleStyle con todas las opciones que el usuario puede personalizar.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
+
 from dataclasses import dataclass, field, fields, replace
 
 LANGUAGES = {
@@ -245,3 +248,21 @@ class Segment:
     lang: str = "auto"
     translation: str = ""
     words: list = field(default_factory=list)   # [(palabra, inicio, fin)] originales
+
+
+def norm_name(text: str) -> str:
+    """'✨ KidCut' → 'kidcut': minúsculas, sin acentos, emojis ni signos."""
+    text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def resolve_preset(name: str) -> str | None:
+    """Clave del estilo listo que corresponde a un nombre (clave o etiqueta, sin emoji); prefijo único también."""
+    q = norm_name(name)
+    if not q:
+        return None
+    for k, p in PRESETS.items():
+        if q in (norm_name(k), norm_name(p["label"])):
+            return k
+    hits = [k for k, p in PRESETS.items() if norm_name(k).startswith(q) or norm_name(p["label"]).startswith(q)]
+    return hits[0] if len(hits) == 1 else None

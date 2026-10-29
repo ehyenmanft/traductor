@@ -47,6 +47,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
 
 import bot_content
 from fetch import download_url, extract_url
+from subtitle_style import norm_name
 from video_translator import (ALIGN, ANIMS, BGS, COLORS, DUBS, FONTS, HIGHLIGHTS,
                               HPOS, LANGUAGES, LOOK_FIELDS, ORIG_VOLS, OUTLINES,
                               PRESETS, PROGRESS, SIZES, SPACINGS, TONES, VPOS,
@@ -619,9 +620,7 @@ async def cmd_keep(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 def _norm_name(text: str) -> str:
-    """'✨ KidCut' → 'kidcut': minúsculas, sin acentos, emojis ni signos."""
-    text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode().lower()
-    return re.sub(r"[^a-z0-9]+", "", text)
+    return norm_name(text)
 
 
 def find_style(user_data: dict, query: str):
