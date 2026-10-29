@@ -118,10 +118,10 @@ class KidCut(unittest.TestCase):
         for w in ("profesional", "order", "acceso", "riesgo".upper()):
             self.assertIn(w.lower(), text.lower())
 
-    def test_white_variant_has_no_glow_and_titles_sit_below_the_top_edge(self):
-        st = replace(ss.apply_preset(ss.SubtitleStyle(target="es"), "kidcutw"), align_v="top")
+    def test_titles_sit_below_the_top_edge_and_kidcut_is_first_in_the_menu(self):
+        self.assertEqual(next(iter(ss.PRESETS)), "kidcut"); self.assertNotIn("kidcutw", ss.PRESETS)
+        st = replace(ss.apply_preset(ss.SubtitleStyle(target="es"), "kidcut"), align_v="top")
         ass = build_ass([ss.Segment(0, 3, "x", "es", "entendemos el flujo institucional")], st, 720, 1280, 3.0)
-        self.assertFalse([l for l in ass.splitlines() if l.startswith("Dialogue: 0,")])
         style = [l for l in ass.splitlines() if l.startswith("Style:")][0].split(",")
         self.assertEqual(int(style[-2]), round(1280 * 0.075))              # MarginV del estilo
 

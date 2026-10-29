@@ -30,9 +30,11 @@ import itertools
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import time
+import unicodedata
 from dataclasses import replace
 
 from telegram import (InlineKeyboardButton, InlineKeyboardMarkup,
@@ -527,7 +529,7 @@ HELP = (
     "• ⭐ plantillas propias\n\n"
     "Después del resultado: ✏️ editar el texto, 🎨 repetir con otro estilo y 🎬 crear contenido: "
     "📱 reel 9:16, ✂️ quitar silencios, 🎞 clips de 55 s, 🖼 carrusel, 📝 títulos y hashtags, miniatura.\n\n"
-    "Comandos: /glosario hola=hello · /conservar Nombre · /almacenamiento · /reiniciar · /ayuda")
+    "Comandos: /estilo kidcut (recuerda un estilo) · /glosario hola=hello · /conservar Nombre · /almacenamiento · /reiniciar · /ayuda")
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -614,6 +616,77 @@ async def cmd_keep(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     ctx.user_data.setdefault("glossary", {})[term] = term
     await update.message.reply_text(f"✅ «{term}» no se traducirá.")
+
+
+def _norm_name(text: str) -> str:
+    """'✨ KidCut' → 'kidcut': minúsculas, sin acentos, emojis ni signos."""
+    text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def find_style(user_data: dict, query: str):
+    """('tpl', índice, nombre) | ('preset', clave, etiqueta) | None. Primero tus plantillas, luego los estilos
+    del bot; por nombre exacto y, si no, por prefijo único."""
+    q = _norm_name(query)
+    if not q:
+        return None
+    named = [("tpl", i, name, _norm_name(name)) for i, (name, _) in enumerate(user_data.get("templates", []))]
+    named += [("preset", k, p["label"], _norm_name(p["label"])) for k, p in PRESETS.items()]
+    named += [("preset", k, p["label"], _norm_name(k)) for k, p in PRESETS.items()]
+    for kind, key, label, norm in named:
+        if norm == q:
+            return kind, key, label
+    pref = {(kind, key): label for kind, key, label, norm in named if norm.startswith(q)}
+    return (*next(iter(pref)), next(iter(pref.values()))) if len(pref) == 1 else None
+
+
+async def cmd_style(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/estilo kidcut → deja ese estilo como el que usarán tus próximos videos.
+    /estilo guardar NOMBRE → guarda el estilo actual con ese nombre; /estilo → lista."""
+    if not await authorized(update, ctx):
+        return
+    reply = update.message.reply_text
+    args = " ".join(ctx.args or []).strip()
+    tpls = ctx.user_data.setdefault("templates", [])
+    if args.lower().startswith(("guardar ", "save ")):
+        name = args.split(None, 1)[1].strip()[:30]
+        if not _norm_name(name):
+            await reply("Ponle un nombre con letras: /estilo guardar mi_estilo")
+            return
+        fields = {f: getattr(ctx.user_data.get("style") or SubtitleStyle(), f) for f in TEMPLATE_FIELDS}
+        for i, (n, _) in enumerate(tpls):
+            if _norm_name(n) == _norm_name(name):
+                tpls[i] = (name, fields)
+                await reply(f"💾 Actualicé «{name}». Aplícalo cuando quieras con /estilo {name}")
+                return
+        if len(tpls) >= MAX_TEMPLATES:
+            await reply(f"Máximo {MAX_TEMPLATES} estilos propios; borra alguno desde ⭐ Mis plantillas.")
+            return
+        tpls.append((name, fields))
+        await reply(f"💾 Guardé tu estilo actual como «{name}». Aplícalo cuando quieras con /estilo {name}")
+        return
+    if not args:
+        cur = ctx.user_data.get("style") or SubtitleStyle()
+        label = PRESETS.get(cur.preset, {}).get("label", "personalizado")
+        lines = [f"🎨 Estilo actual: {label}", "",
+                 "Para usar uno: /estilo kidcut  (acepta el nombre sin emoji)", "",
+                 "Estilos del bot: " + " · ".join(f"{k}" for k in PRESETS)]
+        if tpls:
+            lines += ["", "Tus estilos: " + " · ".join(n for n, _ in tpls)]
+        lines += ["", "Guardar el actual: /estilo guardar nombre"]
+        await reply("\n".join(lines))
+        return
+    hit = find_style(ctx.user_data, args)
+    if hit is None:
+        await reply(f"No encuentro el estilo «{args}». Mira la lista con /estilo")
+        return
+    kind, key, label = hit
+    base = ctx.user_data.get("style") or SubtitleStyle()
+    st = apply_preset(base, key) if kind == "preset" else replace(base, preset="custom", **tpls[key][1])
+    ctx.user_data["style"] = st
+    await reply(f"✅ Estilo «{label}» recordado: lo aplicaré a tus próximos videos "
+                "(posición, tamaño, idioma, tono y doblaje se conservan). "
+                "Puedes cambiarlo antes de confirmar cada video.")
 
 
 async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -971,6 +1044,7 @@ def build_app() -> Application:
     async def post_init(application: Application):    # menú "/" de Telegram
         await application.bot.set_my_commands([
             ("start", "Ayuda y tu id"), ("almacenamiento", "Ver espacio y borrar temporales"),
+            ("estilo", "Elegir o guardar un estilo (ej. /estilo kidcut)"),
             ("glosario", "Términos fijos de traducción"), ("conservar", "No traducir un término"),
             ("reiniciar", "Restablecer el estilo guardado")])
 
@@ -996,6 +1070,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler(["start", "id", "ayuda", "help"], cmd_start))
     app.add_handler(CommandHandler("glosario", cmd_glossary))
     app.add_handler(CommandHandler("conservar", cmd_keep))
+    app.add_handler(CommandHandler(["estilo", "style"], cmd_style))
     app.add_handler(CommandHandler("reiniciar", cmd_reset))
     app.add_handler(CommandHandler(["almacenamiento", "espacio", "storage"], cmd_storage))
     app.add_handler(MessageHandler(

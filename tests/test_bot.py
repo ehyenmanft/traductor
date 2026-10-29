@@ -143,6 +143,47 @@ class BotFlow(unittest.IsolatedAsyncioTestCase):
         self.assertIn("groq_api_key", " ".join(str(c) for c in status.edit_text.await_args_list))
         self.assertFalse(self.job["busy"])                                         # un error no deja el menú bloqueado
 
+    async def style_cmd(self, *args, user_data=None):
+        ctx = self.ctx
+        ctx.user_data = user_data if user_data is not None else ctx.user_data
+        ctx.args = list(args)
+        update = MagicMock(); update.effective_user.id = 1; update.effective_user.username = "u"
+        update.message.reply_text = AsyncMock()
+        await tb.cmd_style(update, ctx)
+        return update.message.reply_text.await_args.args[0]
+
+    async def test_style_command_remembers_kidcut_and_applies_it_to_the_next_video(self):
+        msg = await self.style_cmd("KidCut")
+        self.assertIn("recordado", msg)
+        st = self.ctx.user_data["style"]
+        self.assertEqual((st.preset, st.layout, st.kw_font, st.kw_glow), ("kidcut", "stack", "montxb", True))
+        self.assertEqual(st.words, 5)
+        # lo conserva todo lo demás del usuario (idioma, posición)
+        self.ctx.user_data["style"] = vt.replace(self.ctx.user_data["style"], target="en", align_v="top")
+        await self.style_cmd("✨ kidcut")                                    # con emoji y mayúsculas también
+        self.assertEqual((self.ctx.user_data["style"].target, self.ctx.user_data["style"].align_v), ("en", "top"))
+        # un video nuevo arranca con ese estilo (así lo usa _start_job)
+        fresh = vt.replace(self.ctx.user_data["style"])
+        self.assertEqual(fresh.layout, "stack")
+
+    async def test_style_command_save_list_unknown_and_user_templates(self):
+        msg = await self.style_cmd()
+        self.assertIn("kidcut", msg); self.assertIn("/estilo guardar", msg)
+        await self.style_cmd("kidcut")
+        self.ctx.user_data["style"] = vt.replace(self.ctx.user_data["style"], color="gold", size="l")
+        msg = await self.style_cmd("guardar", "Mi Canal")
+        self.assertIn("Guardé", msg); self.assertEqual(self.ctx.user_data["templates"][0][0], "Mi Canal")
+        await self.style_cmd("hormozi")                                      # cambia a otro…
+        self.assertEqual(self.ctx.user_data["style"].preset, "hormozi")
+        await self.style_cmd("mi canal")                                     # …y vuelve al guardado por su nombre
+        st = self.ctx.user_data["style"]
+        self.assertEqual((st.color, st.size, st.layout, st.preset), ("gold", "l", "stack", "custom"))
+        msg = await self.style_cmd("guardar", "mi canal")                    # mismo nombre: actualiza, no duplica
+        self.assertIn("Actualicé", msg); self.assertEqual(len(self.ctx.user_data["templates"]), 1)
+        self.assertIn("No encuentro", await self.style_cmd("inexistente"))
+        self.assertIn("No encuentro", await self.style_cmd("k"))               # prefijo ambiguo (kids, kidcut, karaoke…)
+        self.assertIn("recordado", await self.style_cmd("kidc"))               # prefijo único
+
     async def test_same_language_returns_menu(self):
         self.job["tr"] = vt.Transcription([vt.Segment(0, 1, "hola", "es")], self.job["info"])
         q = await self.press("go|1")

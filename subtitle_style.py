@@ -210,13 +210,11 @@ PRESETS = {
     "neonpop": _p("🌈 Neón pop", font="righteous", color="pink", outline="thin", outline_color="purple",
                   bold=False, neon=True, shadow=False, highlight="color", hl_color="sky", words=3, anim="pop"),
     # --- plantilla extraída de los videos KidCut: línea pequeña + palabra clave en cursiva negra con halo ---
-    "kidcut": _p("✨ KidCut Neón", font="montmed", layout="stack", kw_font="montxb", kw_glow=True, color="white",
+    "kidcut": _p("✨ KidCut", font="montmed", layout="stack", kw_font="montxb", kw_glow=True, color="white",
                  outline="none", shadow=True, bold=False, words=5, anim="fade", kw_color="ice", keywords=True),
-    "kidcutw": _p("🤍 KidCut Blanco", font="montmed", layout="stack", kw_font="montxb", kw_glow=False, color="white",
-                  outline="none", shadow=True, bold=False, words=5, anim="fade", kw_color="white", keywords=True),
     "ink": _p("🖋 Tinta", font="kalam", color="white", outline="med", bold=True, anim="fade", words=5),
 }
-PRESETS = {k: PRESETS[k] for k in ("kidcut", "kidcutw")} | {k: v for k, v in PRESETS.items() if k not in ("kidcut", "kidcutw")}
+PRESETS = {"kidcut": PRESETS["kidcut"]} | {k: v for k, v in PRESETS.items() if k != "kidcut"}   # el primero del menú
 PRESETS_PER_PAGE = 12
 
 
