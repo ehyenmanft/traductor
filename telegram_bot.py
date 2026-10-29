@@ -48,7 +48,8 @@ from fetch import download_url, extract_url
 from video_translator import (ALIGN, ANIMS, BGS, COLORS, DUBS, FONTS, HIGHLIGHTS,
                               HPOS, LANGUAGES, LOOK_FIELDS, ORIG_VOLS, OUTLINES,
                               PRESETS, PROGRESS, SIZES, SPACINGS, TONES, VPOS,
-                              WORDS, SameLanguageError, SubtitleStyle,
+                              WORDS, FONTS_PER_PAGE, PRESETS_PER_PAGE,
+                              SameLanguageError, SubtitleStyle,
                               apply_edited_srt, apply_preset, build_srt,
                               extract_frame, probe, render_preview,
                               render_video, transcribe_video)
@@ -99,7 +100,8 @@ def allowed_users() -> set[int | str]:
 
 COLOR_EMOJI = {"white": "⚪", "yellow": "🟡", "cyan": "🔵", "green": "🟢",
                "orange": "🟠", "pink": "🩷", "red": "🔴", "blue": "🔷",
-               "purple": "🟣", "black": "⚫"}
+               "purple": "🟣", "black": "⚫", "gold": "🌕", "lime": "🍏",
+               "sky": "🩵", "magenta": "💖", "coral": "🪸", "cream": "🥛", "gray": "🩶"}
 PAGES = {"font": "🔤 Fuente", "color": "🎨 Color", "outline": "✏️ Contorno y fondo",
          "pos": "📍 Posición", "size": "🔠 Tamaño", "extras": "⚙️ Extras",
          "anim": "🎞️ Animación y karaoke", "fx": "✨ Efectos",
@@ -153,6 +155,20 @@ def _chunk(items: list, n: int) -> list[list]:
     return [items[i:i + n] for i in range(0, len(items), n)]
 
 
+def _page_no(page: str, base: str) -> int:
+    tail = page[len(base):]
+    return int(tail) if tail.isdigit() and int(tail) >= 1 else 1
+
+
+def _pager(job_id: int, base: str, n: int, pages: int) -> list[list[InlineKeyboardButton]]:
+    if pages <= 1:
+        return []
+    name = lambda i: base if i == 1 else f"{base}{i}"        # noqa: E731
+    return [[InlineKeyboardButton("⬅️", callback_data=f"p|{job_id}|{name(n - 1 if n > 1 else pages)}"),
+             InlineKeyboardButton(f"{n}/{pages}", callback_data=f"n|{job_id}"),
+             InlineKeyboardButton("➡️", callback_data=f"p|{job_id}|{name(n + 1 if n < pages else 1)}")]]
+
+
 def keyboard(job_id: int, st: SubtitleStyle, page: str = "main",
              templates=()) -> InlineKeyboardMarkup:
     def opt(label, key, val, selected=False):
@@ -171,12 +187,28 @@ def keyboard(job_id: int, st: SubtitleStyle, page: str = "main",
 
     rows: list[list[InlineKeyboardButton]] = []
     if page == "main":
+        items = list(PRESETS.items())
         rows += _chunk([opt(p["label"], "preset", k, st.preset == k)
-                        for k, p in PRESETS.items()], 3)
+                        for k, p in items[:PRESETS_PER_PAGE]], 3)
+        if len(items) > PRESETS_PER_PAGE:
+            rows.append([InlineKeyboardButton(f"🎨 Más estilos ({len(items) - PRESETS_PER_PAGE}) ➡️",
+                                              callback_data=f"p|{job_id}|styles")])
         rows += _chunk([InlineKeyboardButton(label, callback_data=f"p|{job_id}|{k}")
                         for k, label in PAGES.items()], 2)
-    elif page == "font":
-        rows += _chunk([opt(l, "font", k, st.font == k) for k, (l, _) in FONTS.items()], 3)
+    elif page.startswith("styles"):
+        items = list(PRESETS.items())[PRESETS_PER_PAGE:]
+        n, pages = _page_no(page, "styles"), max(1, -(-len(items) // PRESETS_PER_PAGE))
+        rows += header(f"Más estilos · {n}/{pages}")
+        rows += _chunk([opt(p["label"], "preset", k, st.preset == k)
+                        for k, p in items[(n - 1) * PRESETS_PER_PAGE:n * PRESETS_PER_PAGE]], 3)
+        rows += _pager(job_id, "styles", n, pages)
+    elif page.startswith("font"):
+        items = list(FONTS.items())
+        n, pages = _page_no(page, "font"), max(1, -(-len(items) // FONTS_PER_PAGE))
+        rows += header(f"Fuente · {n}/{pages}")
+        rows += _chunk([opt(l, "font", k, st.font == k)
+                        for k, (l, _) in items[(n - 1) * FONTS_PER_PAGE:n * FONTS_PER_PAGE]], 3)
+        rows += _pager(job_id, "font", n, pages)
     elif page == "color":
         rows += header("Color del texto")
         rows += _chunk([opt(f"{COLOR_EMOJI[k]} {l}", "color", k, st.color == k)

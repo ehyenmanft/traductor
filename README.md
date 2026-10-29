@@ -204,3 +204,9 @@ Debajo de cada video traducido aparecen botones: 📱 Reel 9:16 (fondo difuminad
 ✂️ Sin silencios, 🎞 Clips de 55 s, 🖼 Carrusel (4 estilos, imágenes 1080×1350 con las ideas del video), 📝 Títulos y hashtags
 y 🖼 Miniatura. Los textos usan Groq (`groq_api_key`); sin clave el carrusel reparte las frases. Opcional: `"handle": "@tuusuario"`
 en `config.json` para firmar las diapositivas.
+
+### Fuentes y estilos de subtítulos
+El bot trae 26 fuentes (Bebas Neue, Bangers, Poppins Black, Permanent Marker, Pixel, Pacifico…) y 32 estilos listos (🎵 TikTok, 🎙 Podcast,
+🕹 Arcade, 💎 Lujo, 🔥 Fuego, 📺 Noticiero…), con 17 colores. Las fuentes las baja `deploy/fonts.sh` según `deploy/fonts.list`
+(Google Fonts, licencias libres); para añadir una: una línea en `fonts.list` y otra en `FONTS` de `subtitle_style.py`.
+

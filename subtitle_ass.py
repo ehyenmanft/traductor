@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from subtitle_style import (COLORS, FONTS, OUTLINES, BGS, SIZES, SPACINGS,
+from subtitle_style import (COLORS, FONTS, SINGLE_WEIGHT, OUTLINES, BGS, SIZES, SPACINGS,
                             Segment, SubtitleStyle)
 
 MIN_SECONDS = 0.8
@@ -183,7 +183,7 @@ def build_ass(segs: list[Segment], st: SubtitleStyle, width: int, height: int,
         "ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,"
         "MarginR,MarginV,Encoding\n"
         f"Style: Default,{font},{fs},{primary},{secondary},{ocol},{back},"
-        f"{-1 if st.bold else 0},{-1 if st.italic else 0},0,0,100,100,{spacing},0,"
+        f"{-1 if st.bold and st.font not in SINGLE_WEIGHT else 0},{-1 if st.italic else 0},0,0,100,100,{spacing},0,"
         f"{border},{outline},{shadow},{align},{ml},{mr},{mv},1\n\n"
         "[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,"
         "MarginV,Effect,Text\n"

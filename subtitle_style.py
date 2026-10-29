@@ -22,13 +22,36 @@ COLORS = {
     "orange": ("Naranja", "&H000080FF"), "pink": ("Rosa", "&H00C080FF"),
     "red": ("Rojo", "&H000000FF"), "blue": ("Azul", "&H00FF3000"),
     "purple": ("Morado", "&H00A00080"), "black": ("Negro", "&H00000000"),
+    "gold": ("Dorado", "&H0000C4FF"), "lime": ("Lima", "&H0000FFA6"),
+    "sky": ("Celeste", "&H00F7C34F"), "magenta": ("Magenta", "&H00D62BFF"),
+    "coral": ("Coral", "&H006B6BFF"), "cream": ("Crema", "&H00D6F3FF"),
+    "gray": ("Gris", "&H00B0B0B0"),
 }
 # (etiqueta, nombre de fuente instalada). Si falta, fontconfig usa otra similar.
 FONTS = {
     "sans": ("Sans", "Liberation Sans"), "serif": ("Serif", "Liberation Serif"),
     "mono": ("Mono", "DejaVu Sans Mono"), "roboto": ("Roboto", "Roboto"),
     "impact": ("Impacto", "Anton"),
+    # --- instaladas por deploy/fonts.sh (lista en deploy/fonts.list) ---
+    "bebas": ("Bebas Neue", "Bebas Neue"), "bangers": ("Bangers", "Bangers"),
+    "poppins": ("Poppins Black", "Poppins ExtraBold"), "archivo": ("Archivo Black", "Archivo Black"),
+    "marker": ("Marcador", "Permanent Marker"), "luckiest": ("Luckiest", "Luckiest Guy"),
+    "russo": ("Russo", "Russo One"), "barlow": ("Barlow Cond.", "Barlow Condensed ExtraBold"),
+    "staat": ("Staatliches", "Staatliches"), "passion": ("Passion", "Passion One"),
+    "titan": ("Titan One", "Titan One"), "bungee": ("Bungee", "Bungee"),
+    "alfa": ("Alfa Slab", "Alfa Slab One"), "abril": ("Abril Fatface", "Abril Fatface"),
+    "shrikhand": ("Shrikhand", "Shrikhand"), "righteous": ("Righteous", "Righteous"),
+    "audiowide": ("Audiowide", "Audiowide"), "blackops": ("Black Ops", "Black Ops One"),
+    "rubikmono": ("Rubik Mono", "Rubik Mono One"), "knewave": ("Knewave", "Knewave"),
+    "lobster": ("Lobster", "Lobster"), "pacifico": ("Pacifico", "Pacifico"),
+    "kalam": ("Manuscrita", "Kalam"), "typewriter": ("Máq. escribir", "Special Elite"),
+    "pixel": ("Pixel", "Press Start 2P"), "ubuntu": ("Ubuntu", "Ubuntu"),
 }
+# Fuentes de un solo peso: si se pidiera negrita, libass la fabricaría deformando las letras.
+SINGLE_WEIGHT = {"impact", "bebas", "bangers", "poppins", "archivo", "marker", "luckiest", "russo", "barlow",
+                 "staat", "titan", "bungee", "alfa", "abril", "shrikhand", "righteous", "audiowide", "blackops",
+                 "rubikmono", "knewave", "lobster", "pacifico", "typewriter", "pixel"}
+FONTS_PER_PAGE = 12
 OUTLINES = {"none": ("Sin contorno", 0.0), "thin": ("Fino", 0.04),
             "med": ("Medio", 0.07), "thick": ("Grueso", 0.11),
             "xthick": ("Extra", 0.15)}
@@ -143,7 +166,46 @@ PRESETS = {
     "glow": _p("💡 Neón", font="roboto", color="pink", outline="thin",
                outline_color="pink", neon=True, shadow=False, spacing="wide",
                anim="fade"),
+    # --- más estilos (necesitan las fuentes de deploy/fonts.sh) ---
+    "tiktok": _p("🎵 TikTok", font="poppins", color="white", outline="thick", bold=False,
+                 highlight="color", hl_color="magenta", words=3, anim="pop"),
+    "podcast": _p("🎙 Podcast", font="barlow", color="white", bg="soft", bold=False, upper=True,
+                  shadow=False, highlight="color", hl_color="gold", words=5),
+    "arcade": _p("🕹 Arcade", font="pixel", color="yellow", outline="thick", outline_color="red",
+                 bold=False, shadow=False, words=3, anim="bounce"),
+    "graffiti": _p("🖌 Grafiti", font="marker", color="lime", outline="xthick", bold=False,
+                   words=3, anim="pop"),
+    "headline": _p("📰 Titular", font="bebas", color="white", outline="med", bold=False, upper=True,
+                   spacing="wide"),
+    "manga": _p("💢 Manga", font="bangers", color="yellow", outline="xthick", bold=False, upper=True,
+                highlight="pop", hl_color="coral", words=3, anim="pop"),
+    "luxury": _p("💎 Lujo", font="abril", color="gold", outline="thin", bold=False, spacing="wide",
+                 anim="fade"),
+    "script": _p("✍️ Manuscrita", font="pacifico", color="white", outline="med", outline_color="purple",
+                 bold=False, anim="fade"),
+    "oldtype": _p("📜 Máquina antigua", font="typewriter", color="cream", bg="soft", bold=False,
+                  shadow=False, anim="typewriter", words=5),
+    "urban": _p("🏙 Urbano", font="bungee", color="cyan", outline="med", outline_color="blue",
+                bold=False, shadow=True, words=3),
+    "redslab": _p("💥 Slab rojo", font="alfa", color="white", bg="solid", outline_color="red", bold=False,
+                  shadow=False, upper=True, words=3, anim="pop"),
+    "tactical": _p("🪖 Táctico", font="blackops", color="lime", outline="thick", bold=False, upper=True,
+                   words=3),
+    "sport": _p("🏁 Deportivo", font="russo", color="white", outline="thick", bold=False, upper=True,
+                highlight="fill", hl_color="orange", words=5, progress="bottom"),
+    "kids": _p("🎈 Divertido", font="titan", color="yellow", outline="xthick", outline_color="blue",
+               bold=False, anim="bounce", words=3),
+    "fire": _p("🔥 Fuego", font="passion", color="orange", outline="thick", bold=False, upper=True,
+               highlight="pop", hl_color="yellow", words=2, anim="pop"),
+    "news": _p("📺 Noticiero", font="barlow", color="white", bg="solid", outline_color="blue", bold=False,
+               upper=True, shadow=False, words=0),
+    "cinema": _p("🎬 Cine", font="serif", color="cream", outline="thin", bold=False, shadow=True,
+                 anim="fade"),
+    "neonpop": _p("🌈 Neón pop", font="righteous", color="pink", outline="thin", outline_color="purple",
+                  bold=False, neon=True, shadow=False, highlight="color", hl_color="sky", words=3, anim="pop"),
+    "ink": _p("🖋 Tinta", font="kalam", color="white", outline="med", bold=True, anim="fade", words=5),
 }
+PRESETS_PER_PAGE = 12
 
 
 def apply_preset(style: SubtitleStyle, name: str) -> SubtitleStyle:
