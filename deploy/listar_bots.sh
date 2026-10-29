@@ -61,14 +61,23 @@ except Exception:
 if command -v docker >/dev/null 2>&1; then docker ps --format '  • docker {{.Names}}  {{.Image}}  {{.Status}}' 2>/dev/null || echo "  docker: sin permiso (prueba con sudo)"; else echo "  docker: no instalado"; fi
 echo
 
-echo "3) CARPETAS CON ASPECTO DE BOT en $HOME (hasta 3 niveles)"
+echo "3) TODO LO QUE HAY EN TU CARPETA PERSONAL ($HOME) y en /opt /srv /var/www /home"
+line
+for root in "$HOME" /opt /srv /var/www /home; do
+  [[ -d "$root" ]] || continue
+  echo "[$root]"
+  ls -1A "$root" 2>/dev/null | grep -Ev '^\.(cache|local|config|ssh|bash|profile|sudo|viminfo|lesshst|wget|npm|nvm|pm2|fonts|gnupg|pki|cloud|python_history)' | sed 's/^/    /' | head -40
+done
+echo
+
+echo "4) CARPETAS CON ASPECTO DE BOT/PROYECTO (hasta 4 niveles; busca .git, package.json, requirements*.txt, *.py)"
 line
 found=0
 while IFS= read -r d; do
-  found=1; echo "  • $(basename "$d")"; describe_dir "$d"; echo
-done < <(find "$HOME" -maxdepth 3 -type d \( -name node_modules -o -name '.venv*' -o -name '.cache' -o -name '.git' \) -prune -o \
-  -type f \( -name 'telegram_bot.py' -o -name 'bot.py' -o -name 'main.py' -o -name 'index.js' -o -name 'bot.js' \) -print 2>/dev/null \
-  | xargs -r -n1 dirname | sort -u)
+  found=1; echo "  • $d"; describe_dir "$d"; echo
+done < <(find "$HOME" /opt /srv /var/www /home -maxdepth 4 \( -name node_modules -o -name '.venv*' -o -name venv -o -name '.cache' -o -name '.npm' -o -name '.nvm' -o -name __pycache__ -o -name site-packages \) -prune -o \
+  \( -name .git -o -name package.json -o -name 'requirements*.txt' -o -name 'telegram_bot.py' -o -name 'bot.py' -o -name 'main.py' -o -name 'index.js' -o -name 'bot.js' \) -print 2>/dev/null \
+  | xargs -r -n1 dirname | sed 's#/\.git$##' | sort -u | awk '{ keep=1; for (p in seen) if (index($0, p"/")==1) keep=0; if (keep) { seen[$0]=1; print } }')
 ((found)) || echo "  (ninguna)"
 echo
 echo "Fuentes instaladas en este usuario (~/.fonts): $(ls "$HOME/.fonts" 2>/dev/null | wc -l) archivos"
