@@ -101,7 +101,7 @@ def allowed_users() -> set[int | str]:
 COLOR_EMOJI = {"white": "⚪", "yellow": "🟡", "cyan": "🔵", "green": "🟢",
                "orange": "🟠", "pink": "🩷", "red": "🔴", "blue": "🔷",
                "purple": "🟣", "black": "⚫", "gold": "🌕", "lime": "🍏",
-               "sky": "🩵", "magenta": "💖", "coral": "🪸", "cream": "🥛", "gray": "🩶"}
+               "sky": "🩵", "magenta": "💖", "coral": "🪸", "cream": "🥛", "gray": "🩶", "ice": "🧊", "azure": "💙"}
 PAGES = {"font": "🔤 Fuente", "color": "🎨 Color", "outline": "✏️ Contorno y fondo",
          "pos": "📍 Posición", "size": "🔠 Tamaño", "extras": "⚙️ Extras",
          "anim": "🎞️ Animación y karaoke", "fx": "✨ Efectos",

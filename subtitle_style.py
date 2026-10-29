@@ -22,6 +22,7 @@ COLORS = {
     "orange": ("Naranja", "&H000080FF"), "pink": ("Rosa", "&H00C080FF"),
     "red": ("Rojo", "&H000000FF"), "blue": ("Azul", "&H00FF3000"),
     "purple": ("Morado", "&H00A00080"), "black": ("Negro", "&H00000000"),
+    "ice": ("Hielo", "&H00FFC886"), "azure": ("Azul vivo", "&H00FF781E"),
     "gold": ("Dorado", "&H0000C4FF"), "lime": ("Lima", "&H0000FFA6"),
     "sky": ("Celeste", "&H00F7C34F"), "magenta": ("Magenta", "&H00D62BFF"),
     "coral": ("Coral", "&H006B6BFF"), "cream": ("Crema", "&H00D6F3FF"),
@@ -46,11 +47,13 @@ FONTS = {
     "lobster": ("Lobster", "Lobster"), "pacifico": ("Pacifico", "Pacifico"),
     "kalam": ("Manuscrita", "Kalam"), "typewriter": ("Máq. escribir", "Special Elite"),
     "pixel": ("Pixel", "Press Start 2P"), "ubuntu": ("Ubuntu", "Ubuntu"),
+    "montmed": ("Montserrat", "Montserrat Medium"), "montxb": ("Montserrat XB", "Montserrat ExtraBold"),
+    "montbl": ("Montserrat Black", "Montserrat Black"),
 }
 # Fuentes de un solo peso: si se pidiera negrita, libass la fabricaría deformando las letras.
 SINGLE_WEIGHT = {"impact", "bebas", "bangers", "poppins", "archivo", "marker", "luckiest", "russo", "barlow",
                  "staat", "titan", "bungee", "alfa", "abril", "shrikhand", "righteous", "audiowide", "blackops",
-                 "rubikmono", "knewave", "lobster", "pacifico", "typewriter", "pixel"}
+                 "rubikmono", "knewave", "lobster", "pacifico", "typewriter", "pixel", "montmed", "montxb", "montbl"}
 FONTS_PER_PAGE = 12
 OUTLINES = {"none": ("Sin contorno", 0.0), "thin": ("Fino", 0.04),
             "med": ("Medio", 0.07), "thick": ("Grueso", 0.11),
@@ -108,6 +111,9 @@ class SubtitleStyle:
     size: str = "m"               # xs | s | m | l | xl  (relativo al alto)
     spacing: str = "normal"       # tight | normal | wide
     neon: bool = False            # resplandor
+    layout: str = "flow"          # flow = texto corrido | stack = línea pequeña + palabra clave grande debajo
+    kw_font: str = "impact"       # fuente de la palabra clave (layout stack)
+    kw_glow: bool = False         # halo de color en la clave destacada (layout stack)
     # --- animación / karaoke ---
     anim: str = "none"            # none | fade | pop | bounce | typewriter
     highlight: str = "none"       # none | color | pop | fill
@@ -129,7 +135,7 @@ class SubtitleStyle:
 
 # Campos que forman parte del "look" (los pisa un preset / plantilla)
 LOOK_FIELDS = ("font", "color", "outline", "outline_color", "bg", "shadow",
-               "bold", "italic", "upper", "spacing", "neon", "anim",
+               "bold", "italic", "upper", "spacing", "neon", "anim", "layout", "kw_font", "kw_glow",
                "highlight", "hl_color", "words", "keywords", "kw_color",
                "progress")
 
@@ -203,8 +209,14 @@ PRESETS = {
                  anim="fade"),
     "neonpop": _p("🌈 Neón pop", font="righteous", color="pink", outline="thin", outline_color="purple",
                   bold=False, neon=True, shadow=False, highlight="color", hl_color="sky", words=3, anim="pop"),
+    # --- plantilla extraída de los videos KidCut: línea pequeña + palabra clave en cursiva negra con halo ---
+    "kidcut": _p("✨ KidCut Neón", font="montmed", layout="stack", kw_font="montxb", kw_glow=True, color="white",
+                 outline="none", shadow=True, bold=False, words=5, anim="fade", kw_color="ice", keywords=True),
+    "kidcutw": _p("🤍 KidCut Blanco", font="montmed", layout="stack", kw_font="montxb", kw_glow=False, color="white",
+                  outline="none", shadow=True, bold=False, words=5, anim="fade", kw_color="white", keywords=True),
     "ink": _p("🖋 Tinta", font="kalam", color="white", outline="med", bold=True, anim="fade", words=5),
 }
+PRESETS = {k: PRESETS[k] for k in ("kidcut", "kidcutw")} | {k: v for k, v in PRESETS.items() if k not in ("kidcut", "kidcutw")}
 PRESETS_PER_PAGE = 12
 
 

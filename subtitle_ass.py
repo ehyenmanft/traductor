@@ -119,6 +119,135 @@ def seg_tokens(seg: Segment, text: str) -> list[tuple]:
     return out
 
 
+
+# ------------------------------------------------- estilo «stack» (línea pequeña + clave grande)
+
+_STOP = {
+    "es": "el la los las un una unos unas de del al a en y o u e que qué se su sus por para con sin sobre entre como cómo "
+          "más mas muy ya no sí si pero porque pues le les lo me te nos mi tu tus mis es son era fue ser está están esta "
+          "este esto estos estas ese eso esa eso aquí ahí así también cuando donde dónde hay he ha han hemos del lo",
+    "en": "the a an of to in on at for from by with and or but if so as is are was were be been it its this that these "
+          "those i you he she we they me my your our their his her them us do does did not no just very more most than then "
+          "there here what which who whom how when where why also can could will would should have has had",
+    "pt": "o a os as um uma de do da dos das em no na nos nas por para com sem sobre entre como mais muito já não sim se mas "
+          "porque pois me te se nos meu seu é são era foi ser está estão este isto esse isso essa aqui assim também quando",
+    "fr": "le la les un une des de du au aux en dans sur par pour avec sans et ou mais si donc comme plus très ne pas je tu il "
+          "elle nous vous ils elles me te se mon ton son est sont était être ce cet cette ces qui que quoi où",
+    "de": "der die das ein eine einen einem von zu in im auf an für mit ohne und oder aber wenn so als ist sind war waren sein "
+          "ich du er sie es wir ihr nicht kein sehr mehr auch noch schon dass",
+    "it": "il lo la i gli le un una di del della dei delle a al alla in su per con senza e o ma se come più molto non sì io tu "
+          "lui lei noi voi loro è sono era essere questo questa che chi",
+}
+STOPWORDS = {w for ws in _STOP.values() for w in ws.split()}
+NEGATIVE = set(
+    "no nunca jamás error errores quiebra quiebras pierde pierdes perder pérdida pérdidas riesgo riesgos peligro peligroso "
+    "malo mala falso falsa fracaso fraude estafa cuidado never error errors lose loses lost loss losses risk risks danger "
+    "bad fail fails failure fake scam fraud broke não nunca erro perda risco perigo".split())
+
+
+def _core(tok: str) -> str:
+    return re.sub(r"[^\w]", "", tok, flags=re.UNICODE).lower()
+
+
+_CONNECT = set("de del of da do dos das di du des von zu y e and et und".split())
+
+
+def pick_emphasis(tokens: list[str], max_chars: int = 24) -> tuple[int, int] | None:
+    """(inicio, fin) del grupo a destacar: la última palabra con contenido y, si lo que queda detrás es poco
+    (≤ 2 palabras), hasta el final; hacia la izquierda suma palabras con contenido (o un conector como «de»)
+    mientras quepa. None si solo hay relleno o es una palabra corta suelta."""
+    cores = [_core(t) for t in tokens]
+    content = [i for i, c in enumerate(cores) if (len(c) >= 3 and c not in STOPWORDS) or c in NEGATIVE]
+    if not content:
+        return None
+    if len(tokens) == 1 and len(cores[0]) < 5:
+        return None
+    last = content[-1]
+    end = len(tokens) if len(tokens) - (last + 1) <= 2 else last + 1
+    start = last
+    while start > 0 and end - start < 4:
+        prev = start - 1
+        is_content = prev in content
+        is_link = cores[prev] in _CONNECT and prev > 0 and (prev - 1) in content
+        if not (is_content or is_link) or re.search(r"[:;,.!?]$", tokens[prev]):
+            break
+        if len(" ".join(tokens[prev:end])) > max_chars:
+            break
+        start = prev
+    while start < end - 1 and cores[start] in _CONNECT:       # una clave no empieza con «de», «of»…
+        start += 1
+    return start, end
+
+
+def chunk_tokens(toks: list, maxw: int = 7) -> list[list]:
+    """Trozos de frase para mostrar: corta en la puntuación (si ya hay ≥3 palabras) o al llegar a maxw."""
+    chunks, cur = [], []
+    for t in toks:
+        cur.append(t)
+        if len(cur) >= maxw or (len(cur) >= 3 and re.search(r"[,.:;?!…]$", t[0])):
+            chunks.append(cur); cur = []
+    if cur:
+        if chunks and len(cur) < 2 and len(chunks[-1]) + len(cur) <= maxw + 2:
+            chunks[-1] += cur
+        else:
+            chunks.append(cur)
+    return chunks
+
+
+def _est_width(text: str, fs: float) -> float:
+    """Ancho aproximado (px) de MAYÚSCULAS extra-negras cursivas: ~0.70 em por letra."""
+    return sum(0.34 if ch == " " else 0.72 for ch in text) * fs
+
+
+def _stack_events(seg: Segment, body: str, st: SubtitleStyle, width: int, fs_small: int, fs_key: int,
+                  kw_font: str, state: dict, hook_c: str, main_c: str) -> list[tuple]:
+    """[(capa, inicio, fin, tags, texto)] para una frase en el estilo stack."""
+    toks = seg_tokens(seg, _esc(body))
+    if not toks:
+        return []
+    out: list[tuple] = []
+    units = chunk_tokens(toks)
+    for ui, unit in enumerate(units):
+        words = [t[0] for t in unit]
+        u0, u_end = unit[0][1], unit[-1][2]
+        u_end = max(u_end, seg.end) if ui + 1 == len(units) else units[ui + 1][0][1]
+        emp = pick_emphasis(words)
+        small_words = [w for i, w in enumerate(words) if not emp or not (emp[0] <= i < emp[1])]
+        small = " ".join(small_words)
+        fade = "\\fad(120,0)" if st.anim == "fade" else ""
+        if not emp:
+            out.append((1, u0, u_end, fade, small))
+            continue
+        key = re.sub(r"[,;:.]+$", "", " ".join(words[emp[0]:emp[1]]).upper())
+        k_start = unit[emp[0]][1]
+        k_start = max(u0, min(k_start, u_end - 0.1))
+        # tamaño: lo mayor posible sin pasarse del 90 % del ancho
+        fsk = int(min(fs_key, 0.90 * width / max(1.0, _est_width(key, 1.0))))
+        fsk = max(fsk, int(fs_small * 1.15))
+        negative = any(_core(w) in NEGATIVE for w in words[emp[0]:emp[1]])
+        if negative:
+            col, glow, halo = "&H" + COLORS["coral"][1][4:] + "&", True, "&H" + COLORS["red"][1][4:] + "&"
+        elif not state["hook_done"]:
+            col, glow, halo = hook_c, st.kw_glow, "&H" + COLORS["azure"][1][4:] + "&"
+            state["hook_done"] = True
+        else:
+            col, glow, halo = main_c, False, ""
+        kw_tags = f"\\fn{kw_font}\\fs{fsk}\\i1\\b0\\1c{col}"
+        reset = f"\\fn{FONTS.get(st.font, FONTS['sans'])[1]}\\fs{fs_small}\\i0\\1c{main_c}"
+        hidden = f"{{\\alpha&HFF&}}{key}"
+        pop = "\\fscx82\\fscy82\\t(0,140,\\fscx100\\fscy100)" if st.anim in ("fade", "pop", "bounce") else ""
+        if k_start > u0 + 0.05:                         # la línea pequeña aparece antes que la clave
+            out.append((1, u0, k_start, fade, f"{small}\\N{hidden}"))
+        shown = f"{small}\\N{{{kw_tags}{pop}}}{key}{{{reset}}}"
+        out.append((1, k_start, u_end, "" if k_start > u0 + 0.05 else fade, shown))
+        if glow and halo:
+            blur = max(4, round(fsk * 0.16))
+            g_text = (f"{{\\alpha&HFF&}}{small}\\N{{\\alpha&H00&\\1a&HFF&\\3c{halo}\\bord{max(3, round(fsk * 0.14))}"
+                      f"\\blur{blur}\\fn{kw_font}\\fs{fsk}\\i1\\b0{pop}}}{key}")
+            out.append((0, k_start, u_end, "", g_text))
+    return out
+
+
 # ------------------------------------------------------------ layout / ASS
 
 def layout(st: SubtitleStyle, width: int, height: int) -> tuple[int, int, int, int]:
@@ -192,6 +321,24 @@ def build_ass(segs: list[Segment], st: SubtitleStyle, width: int, height: int,
     main_c, hl_c, kw_c = _tc(st.color), _tc(st.hl_color), _tc(st.kw_color)
     per_token = st.anim == "typewriter" or st.highlight in ("color", "pop")
     lines: list[str] = []
+
+    if st.layout == "stack":
+        state = {"hook_done": False}
+        fs_small = max(12, round(fs * 0.58))
+        fs_key = round(fs * 1.55)
+        kfont = FONTS.get(st.kw_font, FONTS["impact"])[1]
+        for seg in fix_timing(segs, duration):
+            body = seg.translation or seg.text
+            if st.censor:
+                body = censor_text(body)
+            for layer, a, b, tags, text in _stack_events(seg, body, st, width, fs_small, fs_key, kfont, state,
+                                                         kw_c, main_c):
+                lines.append(f"Dialogue: {layer},{_ts_ass(a)},{_ts_ass(max(b, a + 0.05))},Default,,0,0,0,,"
+                             f"{{{tags}}}{text}")
+        head = head.replace(f"Style: Default,{font},{fs},", f"Style: Default,{font},{fs_small},", 1)
+        if st.align_v == "top":                        # los titulares van un poco más abajo del borde (≈ 8 %)
+            head = re.sub(r"(,\d+,\d+,)(\d+)(,1\n\n\[Events)", lambda m: m.group(1) + str(round(height * 0.075)) + m.group(3), head, count=1)
+        return head + "\n".join(lines) + "\n"
 
     def emit(a: float, b: float, tags: str, text: str):
         lines.append(f"Dialogue: 0,{_ts_ass(a)},{_ts_ass(max(b, a + 0.05))},"

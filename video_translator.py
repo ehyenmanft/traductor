@@ -253,7 +253,8 @@ def render_preview(frame: str, st: SubtitleStyle, out_path: str,
         f.write(build_ass([seg], st, w, h, PREVIEW_SECONDS))
     _run(["ffmpeg", "-y", "-loop", "1", "-framerate", "10", "-t", str(PREVIEW_SECONDS),
           "-i", os.path.abspath(frame), "-vf", "subtitles=prev.ass",
-          "-ss", str(PREVIEW_AT), "-frames:v", "1", "-q:v", "3",
+          "-ss", str(PREVIEW_SECONDS - 0.4 if st.layout == "stack" else PREVIEW_AT),   # stack: ya con la clave a la vista
+          "-frames:v", "1", "-q:v", "3",
           os.path.abspath(out_path)], cwd=workdir)
     return out_path
 

@@ -32,8 +32,9 @@ class Catalog(unittest.TestCase):
         for key, (label, family) in ss.FONTS.items():
             self.assertTrue(family in lst or family in SYSTEM, f"{key}: «{family}» no está en deploy/fonts.list")
         for fam, path in lst.items():                                    # rutas bien formadas y sin duplicados
-            self.assertRegex(path, r"^(ofl|apache|ufl)/[a-z0-9]+/[A-Za-z0-9\-\[\]]+\.ttf$")
+            self.assertRegex(path, r"^((ofl|apache|ufl)/[a-z0-9]+/|https://raw\.githubusercontent\.com/[\w.\-]+/[\w.\-]+/[\w.\-]+/[\w/.\-]+/)[A-Za-z0-9\-\[\]]+\.ttf$")
         self.assertEqual(len(set(lst.values())), len(lst))
+        self.assertEqual(len({os.path.basename(v) for v in lst.values()}), len(lst))      # mismo nombre de archivo = se pisarían
         with open(os.path.join(ROOT, "deploy", "fonts.sh"), encoding="utf-8") as fh:
             script = fh.read()
         self.assertIn("fonts.list", script)
@@ -64,6 +65,65 @@ class Catalog(unittest.TestCase):
     def test_colors_have_valid_ass_values(self):
         for k, (label, val) in ss.COLORS.items():
             self.assertRegex(val, r"^&H00[0-9A-F]{6}$", k)
+
+
+class KidCut(unittest.TestCase):
+    """Plantilla extraída de los videos KidCut: línea pequeña + palabra clave grande en cursiva negra con halo."""
+    sa = None
+
+    @classmethod
+    def setUpClass(cls):
+        import subtitle_ass
+        cls.sa = subtitle_ass
+
+    def words(self, t):
+        w = t.split(); e = self.sa.pick_emphasis(w)
+        return None if e is None else " ".join(w[e[0]:e[1]])
+
+    def test_emphasis_picks_the_content_words_at_the_end(self):
+        self.assertEqual(self.words("con acceso para personas como tú"), "personas como tú")
+        self.assertEqual(self.words("entendemos el flujo institucional"), "flujo institucional")
+        self.assertEqual(self.words("en base al flow de opciones"), "flow de opciones")
+        self.assertEqual(self.words("más profesional que el order flow: opciones"), "opciones")      # corta en los dos puntos
+        self.assertEqual(self.words("y te quiebra"), "quiebra")
+        self.assertIsNone(self.words("porque ya")); self.assertIsNone(self.words("de la"))           # solo relleno
+        self.assertEqual(self.words("this is the new feature"), "new feature")
+        self.assertLessEqual(len(self.words("administración gubernamental internacional extraordinaria")), 24)
+
+    def test_chunks_follow_punctuation_and_never_exceed_the_limit(self):
+        toks = [(w, 0, 1) for w in "y si no aprendes, te quiebra en tres meses de trabajo duro sin parar".split()]
+        ch = self.sa.chunk_tokens(toks)
+        self.assertEqual([t[0] for c in ch for t in c], [t[0] for t in toks])               # no se pierde ni se repite nada
+        self.assertTrue(all(len(c) <= 9 for c in ch)); self.assertEqual([t[0] for t in ch[0]][-1], "aprendes,")
+
+    def test_ass_has_two_lines_glow_for_hook_and_negatives_and_no_fake_bold(self):
+        st = ss.apply_preset(ss.SubtitleStyle(target="es"), "kidcut")
+        segs = [ss.Segment(0, 3, "x", "es", "más profesional que el order flow: opciones"),
+                ss.Segment(3, 6, "x", "es", "con acceso para personas como tú"),
+                ss.Segment(6, 9, "x", "es", "y no hay riesgo")]
+        ass = build_ass(segs, st, 720, 1280, 9.0)
+        ev = [l for l in ass.splitlines() if l.startswith("Dialogue")]
+        glows = [l for l in ev if l.startswith("Dialogue: 0,")]
+        self.assertEqual(len(glows), 2)                                    # gancho (azul) + negativa (roja); lo demás sin halo
+        self.assertIn("&HFF781E&", glows[0]); self.assertIn("&H0000FF&", glows[1])
+        self.assertTrue(any("OPCIONES" in l and "&HFFC886&" in l for l in ev))      # clave del gancho en azul hielo
+        self.assertTrue(any("PERSONAS COMO TÚ" in l and "&HFFFFFF&" in l for l in ev))
+        self.assertIn("Style: Default,Montserrat Medium,", ass)
+        style = [l for l in ass.splitlines() if l.startswith("Style:")][0]
+        self.assertEqual(style.split(",")[7], "0")
+        # la línea pequeña sale antes que la clave (mismo diseño, clave invisible hasta su turno)
+        self.assertTrue(any("{\\alpha&HFF&}" in l and "OPCIONES" in l and "Dialogue: 1" in l for l in ev))
+        # nada de lo dicho se pierde: cada palabra aparece en alguna línea
+        text = " ".join(ev).replace("\\N", " ")
+        for w in ("profesional", "order", "acceso", "riesgo".upper()):
+            self.assertIn(w.lower(), text.lower())
+
+    def test_white_variant_has_no_glow_and_titles_sit_below_the_top_edge(self):
+        st = replace(ss.apply_preset(ss.SubtitleStyle(target="es"), "kidcutw"), align_v="top")
+        ass = build_ass([ss.Segment(0, 3, "x", "es", "entendemos el flujo institucional")], st, 720, 1280, 3.0)
+        self.assertFalse([l for l in ass.splitlines() if l.startswith("Dialogue: 0,")])
+        style = [l for l in ass.splitlines() if l.startswith("Style:")][0].split(",")
+        self.assertEqual(int(style[-2]), round(1280 * 0.075))              # MarginV del estilo
 
 
 @unittest.skipUnless(HAVE_FF, "necesita ffmpeg")

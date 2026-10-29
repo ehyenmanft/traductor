@@ -210,3 +210,7 @@ El bot trae 26 fuentes (Bebas Neue, Bangers, Poppins Black, Permanent Marker, Pi
 🕹 Arcade, 💎 Lujo, 🔥 Fuego, 📺 Noticiero…), con 17 colores. Las fuentes las baja `deploy/fonts.sh` según `deploy/fonts.list`
 (Google Fonts, licencias libres); para añadir una: una línea en `fonts.list` y otra en `FONTS` de `subtitle_style.py`.
 
+**✨ KidCut Neón / 🤍 KidCut Blanco** (plantilla sacada de los videos KidCut): línea pequeña en Montserrat Medium y debajo la palabra clave en
+Montserrat ExtraBold cursiva MAYÚSCULAS, que aparece cuando se dice. La primera clave lleva halo azul, las negativas (no, riesgo, quiebra…) halo rojo
+y el resto va en blanco. Recomendado: posición «arriba».
+

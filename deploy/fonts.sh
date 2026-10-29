@@ -10,7 +10,8 @@ while IFS='|' read -r path family; do
   [[ -z "${path// }" || "$path" == \#* ]] && continue
   file="$HOME/.fonts/$(basename "$path")"
   if [[ ! -s "$file" ]]; then
-    curl -fsSL --retry 2 -o "$file.tmp" "https://raw.githubusercontent.com/google/fonts/main/$path" \
+    url="$path"; [[ "$path" == http* ]] || url="https://raw.githubusercontent.com/google/fonts/main/$path"
+    curl -fsSL --retry 2 -o "$file.tmp" "$url" \
       && mv "$file.tmp" "$file" || { rm -f "$file.tmp"; }
   fi
   if [[ -s "$file" ]]; then ok=$((ok+1)); else missing+=("$family"); fi

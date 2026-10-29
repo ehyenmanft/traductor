@@ -1,4 +1,4 @@
-# ruta en github.com/google/fonts | familia que usa el estilo (ver FONTS en subtitle_style.py)
+# ruta en github.com/google/fonts (o URL completa) | familia que usa el estilo (ver FONTS en subtitle_style.py)
 ofl/anton/Anton-Regular.ttf|Anton
 ofl/bebasneue/BebasNeue-Regular.ttf|Bebas Neue
 ofl/bangers/Bangers-Regular.ttf|Bangers
@@ -27,3 +27,6 @@ ofl/kalam/Kalam-Bold.ttf|Kalam
 apache/specialelite/SpecialElite-Regular.ttf|Special Elite
 ofl/pressstart2p/PressStart2P-Regular.ttf|Press Start 2P
 ufl/ubuntu/Ubuntu-Bold.ttf|Ubuntu
+https://raw.githubusercontent.com/JulietaUla/Montserrat/master/fonts/ttf/Montserrat-Medium.ttf|Montserrat Medium
+https://raw.githubusercontent.com/JulietaUla/Montserrat/master/fonts/ttf/Montserrat-ExtraBoldItalic.ttf|Montserrat ExtraBold
+https://raw.githubusercontent.com/JulietaUla/Montserrat/master/fonts/ttf/Montserrat-BlackItalic.ttf|Montserrat Black
