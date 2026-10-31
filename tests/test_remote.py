@@ -273,6 +273,15 @@ class Resilience(Base):
         self.assertTrue(wait_for(lambda: any(t[1] == "ES:hello world." for t in c.ev["trans"])))
         self.assertIn("reconnecting", c.ev["status"])
 
+    def test_silence_longer_than_10s_does_not_reconnect(self):
+        """Regresión: el timeout de 10 s del saludo se quedaba en la escucha y se reconectaba cada ~11 s."""
+        c = self.client(); self.assertTrue(wait_for(lambda: c.connected))
+        time.sleep(12)                                        # sin audio ni mensajes del servidor
+        self.assertTrue(c.connected); self.assertEqual(self.s.server.sessions_started, 1)
+        self.assertNotIn("reconnecting", c.ev["status"])
+        self.audio(c)
+        self.assertTrue(wait_for(lambda: any(t[1] == "ES:hello world." for t in c.ev["trans"])))
+
     def test_session_time_limit_allows_reconnect(self):
         self.cfg.max_session_minutes = 0.02          # ≈ 1.2 s
         c = self.client()
@@ -326,3 +335,78 @@ class Proxies(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+AMIGO, OTRO = "token-del-amigo-1234567", "token-de-otro-12345678"
+
+
+class MultiUser(Base):
+    def setUp(self):
+        super().setUp()
+        self.cfg.path = os.path.join(os.path.dirname(self.keysfile), "live_config.json")
+        self.cfg.usage_file = os.path.join(os.path.dirname(self.keysfile), "usage.json")
+        self.set_users(amigo={"token": AMIGO}, otro={"token": OTRO})
+
+    def set_users(self, **users):
+        json.dump({"token": TOKEN, "users": users}, open(self.cfg.path, "w"))
+
+    def test_two_users_at_once_both_get_subtitles(self):
+        a, b = self.client(), self.client(token=AMIGO)
+        self.assertTrue(wait_for(lambda: a.connected and b.connected))
+        self.audio(a); self.audio(b)
+        for c in (a, b):
+            self.assertTrue(wait_for(lambda: any(t[1] == "ES:hello world." for t in c.ev["trans"])))
+        self.assertEqual(set(self.s.server.sessions), {"principal", "amigo"})
+        self.assertFalse(a.ev["fatal"] or b.ev["fatal"])                      # nadie echó a nadie
+
+    def test_server_full_rejects_new_user(self):
+        self.cfg.max_sessions = 1
+        a = self.client(); self.assertTrue(wait_for(lambda: a.connected))
+        b = self.client(token=AMIGO); self.assertTrue(wait_for(lambda: b.ev["fatal"]))
+        self.assertIn("lleno", b.ev["fatal"][0]); self.assertTrue(a.connected)
+
+    def test_users_are_reloaded_without_restart(self):
+        self.set_users(otro={"token": OTRO})                                   # baja del amigo
+        c = self.client(token=AMIGO); self.assertTrue(wait_for(lambda: c.ev["fatal"]))
+        self.assertIn("Token", c.ev["fatal"][0])
+        self.set_users(nuevo={"token": AMIGO})                                 # alta con otro nombre
+        d = self.client(token=AMIGO); self.assertTrue(wait_for(lambda: d.connected))
+        self.assertIn("nuevo", self.s.server.sessions)
+
+    def test_short_tokens_are_ignored(self):
+        self.set_users(debil={"token": "123"})
+        c = self.client(token="123"); self.assertTrue(wait_for(lambda: c.ev["fatal"]))
+
+    def test_daily_quota_ends_session_and_blocks_reconnect(self):
+        self.set_users(amigo={"token": AMIGO, "daily_minutes": 0.02})          # ≈ 1.2 s al día
+        c = self.client(token=AMIGO); self.assertTrue(wait_for(lambda: c.connected))
+        self.assertTrue(wait_for(lambda: c.ev["fatal"], 8))
+        self.assertIn("Cupo", c.ev["fatal"][0])
+        self.assertGreaterEqual(self.s.server.used_seconds("amigo"), 1.0)
+        usage = json.load(open(self.cfg.usage_file))                          # persistido para reinicios
+        self.assertGreaterEqual(next(iter(usage.values()))["amigo"], 1.0)
+
+
+class UsersScript(unittest.TestCase):
+    def test_add_list_remove(self):
+        import importlib, io, tempfile
+        from contextlib import redirect_stdout
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "deploy_live"))
+        users = importlib.import_module("users")
+        users.HERE = tempfile.mkdtemp()
+        users.PATH = os.path.join(users.HERE, "live_config.json")
+        json.dump({"token": TOKEN, "public_url": "wss://x.sslip.io"}, open(users.PATH, "w"))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(users.main(["add", "amigo", "--minutes", "90"]), 0)
+        cfg = json.load(open(users.PATH))
+        tok = cfg["users"]["amigo"]["token"]
+        self.assertIn(tok, out.getvalue()); self.assertIn("wss://x.sslip.io", out.getvalue())
+        sc = srv.ServerConfig(token=TOKEN, path=users.PATH)
+        self.assertEqual(sc.find_user(tok)[0], "amigo")
+        self.assertEqual(sc.find_user(tok)[1]["daily_minutes"], 90)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(users.main(["add", "principal"]), 1)
+            self.assertEqual(users.main(["remove", "amigo"]), 0)
+            self.assertEqual(users.main(["remove", "amigo"]), 1)
+        self.assertIsNone(sc.find_user(tok))

@@ -60,10 +60,14 @@ class SystemAudioCapture:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.muted = False                 # el doblador la silencia mientras habla la voz
+        self.paused = False                # botón ⏸: aparte de muted para que el doblador no la reanude
         self.current_device_name = ""      # dispositivo de salida que se está capturando
 
     def set_muted(self, muted: bool):
         self.muted = bool(muted)
+
+    def set_paused(self, paused: bool):
+        self.paused = bool(paused)
 
     def _find_loopback_device(self, p: pyaudio.PyAudio) -> dict:
         """Encuentra el dispositivo loopback de la salida por defecto ACTUAL."""
@@ -98,7 +102,7 @@ class SystemAudioCapture:
         if channels > 1:
             samples = samples.reshape(-1, channels).mean(axis=1)
         samples = resampler.process(samples)      # siempre, para no cortar el filtro
-        if len(samples) and not self.muted:
+        if len(samples) and not self.muted and not self.paused:
             self.audio_queue.put(samples)
 
     def _capture_loop(self):

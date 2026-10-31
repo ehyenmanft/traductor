@@ -70,6 +70,7 @@ Los atajos funcionan globalmente incluso cuando el videojuego tiene el foco:
    ```json
    {
      "deepgram_api_key": "TU_API_KEY_AQUI",
+     "nvidia_api_keys": ["nvapi-TU_KEY_1", "nvapi-TU_KEY_2"],
      "target_lang": "es",
      "mode": "subtitle",
      "opacity": 90,
@@ -78,6 +79,8 @@ Los atajos funcionan globalmente incluso cuando el videojuego tiene el foco:
    }
    ```
    *(Consigue $200 de crédito gratuito registrándote en [deepgram.com](https://deepgram.com))*.
+   `nvidia_api_keys` es opcional: si Deepgram no conecta (sin saldo o caído), transcribe NVIDIA Canary rotando esas keys
+   (gratis en [build.nvidia.com](https://build.nvidia.com/nvidia/canary-1b-asr)) y cada 60 s se reintenta Deepgram.
 
 3. **Iniciar con el script automatizado:**
    Simplemente ejecuta:
@@ -105,6 +108,7 @@ El ejecutable listo para usar se generará en `dist/TraductorEnVivo/TraductorEnV
 voice-overlay/
 ├── audio_capture.py          # WASAPI loopback (captura de audio de salida de PC a 16 kHz)
 ├── transcriber_deepgram.py   # Motor streaming por WebSockets con Deepgram nova-3
+├── transcriber_nvidia.py     # Respaldo de Deepgram: NVIDIA Canary 1B rotando varias keys
 ├── transcriber_groq.py       # Motor remoto con Groq Whisper Large v3
 ├── transcriber.py            # Motor local con faster-whisper + VAD dinámico
 ├── translator.py             # Motor de traducción con caché en tiempo real

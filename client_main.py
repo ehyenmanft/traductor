@@ -7,12 +7,14 @@ Configuración (config.json junto al .exe):
   {"server": "ws://127.0.0.1:8765", "token": "…",
    "ssh": {"host": "IP-DE-AWS", "user": "ubuntu", "key": "C:\\ruta\\clave.pem"}}
 Con la sección "ssh" el cliente abre solo el túnel cifrado hacia AWS.
+Sin túnel (usuarios invitados): {"server": "wss://IP.sslip.io", "token": "…"} (HTTPS con Caddy en AWS).
 """
 import argparse
 import json
 import os
 import sys
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 from apppath import app_dir
 
@@ -27,7 +29,8 @@ from overlay import TranslationOverlay
 from tunnel import SshTunnel, find_key, prepare_key
 
 STATUS_TEXT = {"connecting": "🔌 Conectando con AWS…", "connected": "✅ Conectado con AWS",
-               "reconnecting": "⚠️ Sin conexión; reconectando…"}
+               "reconnecting": "⚠️ Sin conexión; reconectando…",
+               "paused": "⏸ En pausa: sin conexión ni gasto de APIs"}
 
 
 def load_config(path: str) -> dict:
@@ -51,9 +54,15 @@ def build(cfg: dict, app: QApplication, no_tunnel: bool = False, capture_factory
     """Crea todas las piezas del cliente y las conecta (sin entrar al bucle de Qt ni arrancar red)."""
     token = str(cfg.get("token", "")).strip()
     url = str(cfg.get("server", "ws://127.0.0.1:8765")).strip()
+    while url.lower().startswith(("wss://wss://", "ws://ws://")):        # dirección pegada sobre un prefijo ya escrito
+        url = url.split("//", 1)[1]
     if not token:
         raise ClientError(f"Falta el token en {config_path or 'config.json'}.\n\n"
                           f"Agrega:\n{{\"token\": \"…\", \"server\": \"{url}\"}}")
+    host = urlsplit(url).hostname or ""
+    if url.startswith("ws://") and host not in ("127.0.0.1", "localhost", "::1"):
+        raise ClientError(f"El servidor {url} no va cifrado: el token viajaría a la vista.\n\n"
+                          f"Usa la dirección que empieza por wss:// en {config_path or 'config.json'}.")
     icon_path = os.path.join(app_dir(), "traductor.ico")
 
     overlay = TranslationOverlay()
@@ -110,6 +119,14 @@ def build(cfg: dict, app: QApplication, no_tunnel: bool = False, capture_factory
         overlay._flash("🔊 Doblaje de voz: ACTIVADO" if on else "🔇 Doblaje de voz: apagado")
 
     overlay.dub_toggle_requested.connect(_toggle_dub)
+
+    def _on_pause(paused: bool):
+        capture.set_paused(paused)
+        session.set_paused(paused)
+        if paused:
+            dub_player.stop_current()
+
+    overlay.pause_toggled.connect(_on_pause)
 
     tunnel = None
     ssh = cfg.get("ssh") if isinstance(cfg.get("ssh"), dict) else None

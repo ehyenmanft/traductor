@@ -1,4 +1,8 @@
 {
+  "nvidia_api_keys": [
+    "nvapi-TU_KEY_1",
+    "nvapi-TU_KEY_2"
+  ],
   "deepgram_api_key": "TU_API_KEY_DEEPGRAM_AQUI",
   "groq_api_key": "",
   "opacity": 90,

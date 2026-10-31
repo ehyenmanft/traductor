@@ -6,9 +6,11 @@ pesado quedan aquí.
     audio PCM (WebSocket) → Deepgram nova-3 → traducción (Groq/Google, tono,
     glosario, contexto) → subtítulos + (opcional) voz edge-tts → de vuelta a la PC
 
-Seguridad: escucha SOLO en 127.0.0.1 por defecto (se accede con un túnel SSH,
-sin abrir puertos). Exige un token. Una sesión a la vez: un cliente nuevo
-reemplaza al anterior (reconexión tras un corte de red).
+Seguridad: escucha SOLO en 127.0.0.1 por defecto (delante va Caddy con HTTPS, o un
+túnel SSH). Cada usuario tiene su token ("users" en live_config.json, se relee en cada
+conexión: añadir o quitar usuarios no exige reiniciar). Varios usuarios a la vez; el
+mismo usuario conectándose otra vez reemplaza su sesión anterior (reconexión tras un
+corte de red). Cupo opcional de minutos por día y usuario.
 
 Uso:  python live_server.py --live-config live_config.json
 """
@@ -24,6 +26,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import numpy as np
 from websockets.asyncio.server import serve
@@ -43,9 +46,13 @@ OUT_QUEUE_MAX = 400
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8765
-    token: str = ""
-    keys_file: str = ""                 # config.json con deepgram_api_key / groq_api_key / glossary…
+    token: str = ""                     # token del dueño (usuario "principal")
+    keys_file: str = ""                 # config.json con deepgram_api_key / nvidia_api_keys / groq_api_key / glossary…
     max_session_minutes: int = 0        # 0 = sin límite
+    max_sessions: int = 4               # usuarios conectados a la vez (cada uno es un stream de Deepgram)
+    users: dict = field(default_factory=dict)   # {"nombre": {"token": "…", "daily_minutes": 120}}
+    usage_file: str = ""                # minutos usados por día y usuario (sobrevive a reinicios)
+    path: str = ""                      # live_config.json, para releer "users"
 
     def keys(self) -> dict:
         """Claves y ajustes; se releen en cada sesión (cambiar una clave no exige reiniciar)."""
@@ -56,15 +63,43 @@ class ServerConfig:
         except (OSError, ValueError):
             return {}
 
+    def accounts(self) -> dict:
+        """{nombre: {"token", "daily_minutes"}}; relee live_config.json para ver altas y bajas al momento."""
+        users = self.users
+        if self.path:
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    users = json.load(f).get("users", users)
+            except (OSError, ValueError, AttributeError):
+                pass
+        out = {}
+        if self.token:
+            out["principal"] = {"token": self.token, "daily_minutes": 0}
+        for name, u in (users or {}).items():
+            if isinstance(u, dict) and isinstance(u.get("token"), str) and len(u["token"]) >= 16:
+                out[str(name)] = {"token": u["token"], "daily_minutes": float(u.get("daily_minutes") or 0)}
+        return out
+
+    def find_user(self, token: str) -> tuple[str, dict] | None:
+        found = None
+        for name, u in self.accounts().items():               # sin cortar antes: mismo tiempo para todos
+            if hmac.compare_digest(token.encode(), u["token"].encode()):
+                found = (name, u)
+        return found
+
 
 def load_config(path: str | None) -> ServerConfig:
     cfg = ServerConfig()
     if path and os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        for k in ("host", "port", "token", "keys_file", "max_session_minutes"):
+        for k in ("host", "port", "token", "keys_file", "max_session_minutes", "max_sessions", "usage_file"):
             if k in data:
                 setattr(cfg, k, type(getattr(cfg, k))(data[k]))
+        cfg.users = data.get("users") or {}
+        cfg.path = path
+        if not cfg.usage_file:
+            cfg.usage_file = os.path.join(os.path.dirname(os.path.abspath(path)), "usage.json")
     cfg.token = os.environ.get("LIVE_TOKEN", cfg.token)
     return cfg
 
@@ -85,11 +120,13 @@ class Factories:
 
 def _deepgram(audio_q, keys, lang):
     from transcriber_deepgram import DeepgramTranscriber
+    from transcriber_nvidia import build_fallback
     terms = list(keys.get("keyterms") or []) + list((keys.get("glossary") or {}))
     return DeepgramTranscriber(
         audio_q, api_key=keys["deepgram_api_key"], language=lang,
         endpointing_ms=int(keys.get("endpointing_ms", 300)),
-        keyterms=list(dict.fromkeys(terms)))
+        keyterms=list(dict.fromkeys(terms)),
+        fallback=build_fallback(audio_q, keys.get("nvidia_api_keys"), lang))
 
 
 def _translator(target, keys, tone):
@@ -247,12 +284,47 @@ class Session:
 
 class LiveServer:
     def __init__(self, cfg: ServerConfig, factories: Factories | None = None):
-        if not cfg.token:
+        if not cfg.accounts():
             raise SystemExit("Falta el token (live_config.json o LIVE_TOKEN): sin él no arranco.")
         self.cfg, self.f = cfg, factories or Factories()
-        self.current: Session | None = None
-        self.current_ws = None
+        self.sessions: dict[str, tuple[Session, object]] = {}     # usuario → (sesión, websocket)
         self.sessions_started = 0
+        self.usage = self._load_usage()
+
+    @property
+    def current(self) -> Session | None:
+        """La sesión más reciente (compatibilidad con el modo de un solo usuario)."""
+        return next(reversed(self.sessions.values()))[0] if self.sessions else None
+
+    # ---------- cupo diario ----------
+
+    @staticmethod
+    def _today() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _load_usage(self) -> dict:
+        try:
+            with open(self.cfg.usage_file, encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def used_seconds(self, user: str) -> float:
+        return float(self.usage.get(self._today(), {}).get(user, 0))
+
+    def _add_usage(self, user: str, seconds: float):
+        day = self._today()
+        self.usage = {day: self.usage.get(day, {})}            # solo se guarda el día en curso
+        self.usage[day][user] = round(self.used_seconds(user) + seconds, 1)
+        if self.cfg.usage_file:
+            try:
+                tmp = self.cfg.usage_file + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(self.usage, f)
+                os.replace(tmp, self.cfg.usage_file)
+            except OSError as e:
+                log.warning("no pude guardar el uso: %s", e)
 
     async def handler(self, ws):
         peer = getattr(ws, "remote_address", None)
@@ -271,10 +343,16 @@ class LiveServer:
             log.info("conexión rechazada (%s) desde %s", type(e).__name__, peer)
             await self._reject(ws, P.CLOSE_PROTOCOL, "Saludo inválido.")
             return
-        if not hmac.compare_digest(str(hello.get("token", "")).encode(), self.cfg.token.encode()):
+        account = self.cfg.find_user(str(hello.get("token", "")))
+        if account is None:
             await asyncio.sleep(0.5)                                 # frena la fuerza bruta
             log.warning("token inválido desde %s", peer)
             await self._reject(ws, P.CLOSE_AUTH, "Token inválido.")
+            return
+        user, acc = account
+        quota = acc["daily_minutes"] * 60
+        if quota > 0 and self.used_seconds(user) >= quota:
+            await self._reject(ws, P.CLOSE_AUTH, "Cupo diario de minutos agotado; vuelve mañana.")
             return
 
         # ---- 2. claves del servidor
@@ -283,16 +361,19 @@ class LiveServer:
             await self._reject(ws, P.CLOSE_PROTOCOL, "El servidor no tiene deepgram_api_key configurada.")
             return
 
-        # ---- 3. una sesión a la vez: el cliente nuevo reemplaza al anterior
-        if self.current is not None:
-            log.info("sesión anterior reemplazada por una nueva conexión")
-            old, old_ws = self.current, self.current_ws
+        # ---- 3. una sesión por usuario: su conexión nueva reemplaza a la anterior
+        if user in self.sessions:
+            log.info("[%s] sesión anterior reemplazada por una nueva conexión", user)
+            old, old_ws = self.sessions.pop(user)
             old.close()
-            self.current = self.current_ws = None
             try:                              # sin esperar a una conexión vieja que puede estar muerta
                 await asyncio.wait_for(self._reject(old_ws, P.CLOSE_BUSY, "Otra conexión tomó la sesión."), 1.0)
             except Exception:  # noqa: BLE001 — incluye TimeoutError
                 pass
+        elif len(self.sessions) >= self.cfg.max_sessions:
+            log.warning("[%s] rechazado: servidor lleno (%d sesiones)", user, len(self.sessions))
+            await self._reject(ws, P.CLOSE_BUSY, "El servidor está lleno; inténtalo en un rato.")
+            return
         loop = asyncio.get_running_loop()
         try:
             session = Session(loop, self.cfg, keys, P.clean_settings(hello), self.f)
@@ -300,22 +381,23 @@ class LiveServer:
             log.exception("no pude crear la sesión")
             await self._reject(ws, P.CLOSE_PROTOCOL, f"Error del servidor: {type(e).__name__}")
             return
-        self.current, self.current_ws = session, ws
+        self.sessions[user] = (session, ws)
         self.sessions_started += 1
-        log.info("sesión iniciada desde %s (objetivo=%s, doblaje=%s)", peer,
-                 session.settings["target"], session.settings["dub"])
+        started = time.monotonic()
+        log.info("[%s] sesión iniciada (objetivo=%s, doblaje=%s, activas=%d)", user,
+                 session.settings["target"], session.settings["dub"], len(self.sessions))
         try:
             await ws.send(P.encode({"type": "ready", "engine": "deepgram", "version": P.PROTOCOL_VERSION}))
         except ConnectionClosed:
             session.close()
-            if self.current is session:
-                self.current = self.current_ws = None
+            self._forget(user, session)
             return
 
         sender = asyncio.create_task(self._sender(ws, session))
-        limit = None
-        if self.cfg.max_session_minutes > 0:
-            limit = asyncio.create_task(self._time_limit(ws, session))
+        limits = [self.cfg.max_session_minutes * 60] if self.cfg.max_session_minutes > 0 else []
+        if quota > 0:
+            limits.append(quota - self.used_seconds(user))
+        limit = asyncio.create_task(self._time_limit(ws, min(limits))) if limits else None
         try:
             async for msg in ws:
                 if session.closed:
@@ -340,9 +422,13 @@ class LiveServer:
                 limit.cancel()
             sender.cancel()                      # no esperar a una cola que puede estar llena
             await asyncio.gather(sender, return_exceptions=True)
-            if self.current is session:
-                self.current = self.current_ws = None
-            log.info("sesión terminada")
+            self._forget(user, session)
+            self._add_usage(user, time.monotonic() - started)
+            log.info("[%s] sesión terminada (hoy: %.0f min)", user, self.used_seconds(user) / 60)
+
+    def _forget(self, user: str, session: Session):
+        if self.sessions.get(user, (None,))[0] is session:
+            del self.sessions[user]
 
     @staticmethod
     async def _reject(ws, code: int, message: str, fatal: bool = True):
@@ -363,8 +449,8 @@ class LiveServer:
             except ConnectionClosed:
                 return
 
-    async def _time_limit(self, ws, session: Session):
-        await asyncio.sleep(self.cfg.max_session_minutes * 60)
+    async def _time_limit(self, ws, seconds: float):
+        await asyncio.sleep(max(0.0, seconds))
         await self._reject(ws, P.CLOSE_LIMIT, "Límite de sesión alcanzado; reconecta para seguir.", fatal=False)
 
     async def serve(self, ready: "asyncio.Future | None" = None):

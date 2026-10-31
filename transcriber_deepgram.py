@@ -19,6 +19,7 @@ from transcript import TranscriptSegment, clean_text
 RATE = 16000
 DG_BASE = "wss://api.deepgram.com/v1/listen"
 KEEPALIVE_EVERY = 4.0   # Deepgram cierra el socket tras ~10 s sin audio
+FALLBACK_RETRY_SEC = 60.0   # con Deepgram caído, cada cuánto se vuelve a intentar mientras transcribe el respaldo
 
 
 class DeepgramTranscriber:
@@ -32,6 +33,7 @@ class DeepgramTranscriber:
         endpointing_ms: int = 300,     # silencio que cierra una frase (menor = más rápido)
         utterance_end_ms: int = 1000,  # respaldo si el ruido de fondo impide el endpointing
         keyterms: list[str] | None = None,   # vocabulario a reforzar (nombres, jerga)
+        fallback=None,   # motor por frases (NvidiaTranscriber) que transcribe mientras Deepgram no conecta
     ):
         if not api_key:
             raise ValueError("Falta DEEPGRAM_API_KEY")
@@ -43,6 +45,9 @@ class DeepgramTranscriber:
         self.keyterms = [k.strip() for k in (keyterms or []) if k and k.strip()][:50]
         self.text_queue: "queue.Queue[TranscriptSegment]" = queue.Queue()
         self._stop = threading.Event()
+        self.fallback = fallback
+        if fallback:
+            fallback.text_queue = self.text_queue   # el pipeline lee una sola cola
 
         # estado de la utterance en curso
         self._uid = 0
@@ -132,6 +137,7 @@ class DeepgramTranscriber:
     def _run(self):
         import websocket  # websocket-client
         backoff = 1.0
+        fails = 0
         while not self._stop.is_set():
             try:
                 ws = websocket.create_connection(
@@ -142,6 +148,7 @@ class DeepgramTranscriber:
                 ws.settimeout(1.0)
                 print("[deepgram] Conectado.")
                 backoff = 1.0
+                fails = 0
 
                 recv_error = threading.Event()
 
@@ -199,13 +206,33 @@ class DeepgramTranscriber:
                           "continúo sin vocabulario personalizado.")
                     self.keyterms = []
                     continue
+                fails += 1
+                if self.fallback and fails >= 2:     # el primer fallo suele ser un corte breve
+                    print(f"[deepgram] Sin conexión ({type(e).__name__}); transcribe NVIDIA "
+                          f"y reintento Deepgram en {FALLBACK_RETRY_SEC:.0f} s.")
+                    self._run_fallback(FALLBACK_RETRY_SEC)
+                    continue
                 print(f"[deepgram] Conexión caída ({type(e).__name__}). "
                       f"Reintentando en {backoff:.0f} s...")
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 15)
+
+    def _run_fallback(self, seconds: float):
+        """Presta la cola de audio al respaldo durante `seconds` (bloquea este hilo)."""
+        until = threading.Event()
+        timer = threading.Timer(seconds, until.set)
+        timer.daemon = True
+        timer.start()
+        self.fallback._uid = self._uid       # ids de frase seguidos: el overlay no pisa frases viejas
+        # shortcut: la frase a medio acumular al cumplirse el plazo se descarta (≤4.5 s); conservarla si molesta
+        self.fallback._loop(until)
+        self._uid = self.fallback._uid
+        timer.cancel()
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()
 
     def stop(self):
         self._stop.set()
+        if self.fallback:
+            self.fallback.stop()

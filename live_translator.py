@@ -44,6 +44,21 @@ TONES = {
 }
 
 
+class RateLimited(RuntimeError):
+    """Groq respondió 429 (límite por minuto): no es una caída, otro modelo tiene su propio cupo."""
+
+    def __init__(self, wait: float):
+        super().__init__(f"429 límite de Groq (reintentar en {wait:.1f} s)")
+        self.wait = wait
+
+
+def _retry_after(r) -> float:
+    try:
+        return min(max(float(r.headers.get("retry-after", "") or 2.0), 0.5), 5.0)
+    except ValueError:
+        return 2.0
+
+
 def norm_lang(code: str) -> str:
     code = (code or "auto").lower().strip()
     if code.startswith("zh"):
@@ -187,11 +202,7 @@ class LiveTranslator:
         r = requests.post(GROQ_URL, headers=headers, json=body, timeout=timeout,
                           stream=bool(on_delta))
         if r.status_code == 429 and retry_429:           # límite por minuto: esperar y repetir, no perder la frase
-            try:
-                wait = float(r.headers.get("retry-after", "") or 2.0)
-            except ValueError:
-                wait = 2.0
-            time.sleep(min(max(wait, 0.5), 5.0))
+            time.sleep(_retry_after(r))
             r = requests.post(GROQ_URL, headers=headers, json=body, timeout=timeout,
                               stream=bool(on_delta))
         if r.status_code == 400 and "reasoning" in (r.text or "").lower():
@@ -204,6 +215,8 @@ class LiveTranslator:
                 self._dead_models.add(model)  # modelo retirado: no volver a intentarlo
                 self._discover_models()       # y buscar cuáles sí ofrece Groq ahora
             raise RuntimeError(f"{r.status_code} {(r.text or '')[:140]}")
+        if r.status_code == 429:
+            raise RateLimited(_retry_after(r))
         r.raise_for_status()
         if not on_delta:
             return _clean(r.json()["choices"][0]["message"]["content"])
@@ -238,7 +251,8 @@ class LiveTranslator:
         except Exception as e:  # noqa: BLE001
             print(f"[translator] no pude listar modelos de Groq: {type(e).__name__}: {str(e)[:100]}")
             return
-        skip = ("whisper", "guard", "tts", "embed", "orpheus", "playai", "distil", "compound", "safeguard", "vision")
+        skip = ("whisper", "guard", "tts", "embed", "orpheus", "playai", "distil", "compound", "safeguard", "vision",
+                "allam")                          # allam: modelo de árabe, traduce mal el resto
         chat = [i for i in ids if not any(k in i.lower() for k in skip)]
         if not chat:
             return
@@ -316,9 +330,13 @@ class LiveTranslator:
             if time.monotonic() < self._partial_pause or self.partial_model in self._dead_models:
                 return ""
             try:
-                out = self._groq(self.partial_model, self._messages(text, norm_lang(src), True),
+                # sin contexto: la mitad de tokens (cupo por minuto de Groq) y respuesta antes; la final corrige
+                out = self._groq(self.partial_model, self._messages(text, norm_lang(src), False),
                                  min(400, 60 + 2 * len(text)), 4.0)
                 return "" if _bad(out) else out
+            except RateLimited as e:
+                self._partial_pause = time.monotonic() + e.wait   # solo lo que pide Groq, no 8 s a ciegas
+                return ""
             except Exception:  # noqa: BLE001
                 self._partial_pause = time.monotonic() + 8.0     # respira: sin parciales 8 s
                 return ""                     # un parcial perdido no justifica llamar a Google
@@ -350,8 +368,9 @@ class LiveTranslator:
                 model = pending[0]          # se relee cada vuelta: _discover_models puede cambiar la lista
                 tried.add(model)
                 try:
+                    # con otro modelo libre se salta a él (cupo propio) en vez de esperar al límite de este
                     out = self._groq(model, self._messages(text, src, True), min(1200, 150 + 3 * len(text)),
-                                     10.0, on_delta, retry_429=True)
+                                     10.0, on_delta, retry_429=len(pending) == 1)
                     self._fails = 0
                     if _bad(out):
                         errors.append(f"{model}: respuesta vacía")
@@ -363,7 +382,8 @@ class LiveTranslator:
                 except Exception as e:  # noqa: BLE001
                     errors.append(f"{model}: {type(e).__name__}: {str(e)[:140]}")
                     print(f"[translator] {errors[-1]}")
-                    self._groq_failed()
+                    if not isinstance(e, RateLimited):     # un 429 no es una caída: no abrir el circuito
+                        self._groq_failed()
         elif self.groq_key:
             errors.append("Groq en pausa (4 fallos seguidos)")
         for name, fn in (("Google", self._google), ("MyMemory", self._mymemory)):

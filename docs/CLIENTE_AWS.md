@@ -82,3 +82,27 @@ systemctl status traductor-bot traductor-live --no-pager | grep -E "●|Active"
 cd ~/traductor-live && bash deploy_live/update_live.sh        # actualizar
 cd ~/traductor-live && bash deploy_live/uninstall_live.sh     # quitar el servicio (no toca el bot)
 ```
+
+## Repartirlo a otras personas (rama `claude/traductor-multiusuario`)
+Cada persona instala el cliente en su PC y se conecta a **tu** servidor por HTTPS (`wss://`), con un **token propio** que puedes quitarle cuando quieras. No reciben la clave SSH ni las claves de Deepgram/Groq.
+
+**En AWS (una vez, instancia `amazona-bot`):**
+1. Lightsail → `amazona-bot` → **Redes**: crea y asocia una **IP estática** y abre los puertos **80** y **443** (TCP).
+2. En la terminal de la instancia:
+   ```bash
+   cd ~/traductor-live 2>/dev/null || git clone https://github.com/ehyenmanft/traductor.git ~/traductor-live && cd ~/traductor-live
+   git fetch && git checkout claude/traductor-multiusuario && git pull --ff-only
+   [ -f live_config.json ] && bash deploy_live/update_live.sh || bash deploy_live/install_live.sh
+   bash deploy_live/install_https.sh
+   ```
+   Al final imprime la dirección, del tipo `wss://3-147-64-254.sslip.io` (con tu IP).
+3. Un usuario por persona:
+   ```bash
+   .venv-live/bin/python deploy_live/users.py add amigo --minutes 120   # 120 min/día; sin --minutes = sin cupo
+   .venv-live/bin/python deploy_live/users.py list
+   .venv-live/bin/python deploy_live/users.py remove amigo              # su token deja de valer al instante
+   ```
+
+**El instalador:** GitHub → **Actions** → *Compilar cliente de Windows* → última ejecución en verde → **Artifacts → TraductorCliente-Setup**. Pásale `TraductorCliente-Setup.exe` y, por separado, la dirección `wss://…` y su token. El instalador se los pide (no necesita permisos de administrador).
+
+**Límites:** hasta 4 personas conectadas a la vez (`max_sessions` en `live_config.json`). Cada persona conectada es un stream de Deepgram que pagas tú; el cupo diario (`--minutes`) lo acota. Si la misma persona abre el programa dos veces, la segunda reemplaza a la primera.
