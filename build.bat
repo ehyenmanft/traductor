@@ -28,6 +28,7 @@ echo [BUILD] Empaquetando (esto tarda varios minutos)...
     --icon traductor.ico ^
     --collect-all faster_whisper ^
     --collect-all edge_tts ^
+    --collect-all riva ^
     --hidden-import style_dialog ^
     main.py
 if errorlevel 1 (

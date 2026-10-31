@@ -92,6 +92,8 @@ class RateLimiter:
 
 class GroqTranscriber:
     """Misma interfaz que StreamingTranscriber: text_queue / start / stop."""
+    TAG = "groq"
+    MODEL = GROQ_MODEL
 
     def __init__(
         self,
@@ -113,6 +115,7 @@ class GroqTranscriber:
         self.forced_language = language
         self.limiter = RateLimiter()
         self.consecutive_errors = 0
+        self._uid = 0             # id de frase; Deepgram lo comparte al usar este motor de respaldo
 
         self.min_samples = int(min_segment_sec * RATE)
         self.max_samples = int(max_segment_sec * RATE)
@@ -120,7 +123,7 @@ class GroqTranscriber:
         self.base_threshold = silence_threshold
         self.noise_floor = silence_threshold / 2
         self.silence_samples_to_flush = int(silence_sec_to_flush * RATE)
-        print(f"[groq] Motor remoto listo: {GROQ_MODEL}")
+        print(f"[{self.TAG}] Motor remoto listo: {self.MODEL}")
 
     # ---------- llamada a la API ----------
 
@@ -147,10 +150,10 @@ class GroqTranscriber:
             self.consecutive_errors = 0
         except Exception as e:
             self.consecutive_errors += 1
-            print(f"[groq] Error de red/API ({type(e).__name__}). "
+            print(f"[{self.TAG}] Error de red/API ({type(e).__name__}). "
                   f"Segmento perdido ({self.consecutive_errors} seguidos).")
             if self.consecutive_errors >= 5:
-                print("[groq] Muchos fallos seguidos — considera reiniciar "
+                print(f"[{self.TAG}] Muchos fallos seguidos — considera reiniciar "
                       "con --engine local.")
             return
         finally:
@@ -171,17 +174,19 @@ class GroqTranscriber:
 
     # ---------- bucle principal ----------
 
-    def _loop(self):
+    def _loop(self, until=None):
+        """`until`: evento que corta el bucle (Deepgram lo usa al prestar el audio al respaldo)."""
         buffer: list[np.ndarray] = []
         buffered = 0
         silent_samples = 0
-        utterance_id = 0
 
-        while not self._stop.is_set():
+        while not self._stop.is_set() and not (until and until.is_set()):
             try:
                 chunk = self.audio_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
+            if isinstance(chunk, (bytes, bytearray)):    # int16 del servidor remoto
+                chunk = np.frombuffer(chunk, np.int16).astype(np.float32) / 32768
 
             rms = float(np.sqrt(np.mean(chunk**2)))
             is_silent = rms < self._dynamic_threshold(rms, len(chunk))
@@ -213,8 +218,8 @@ class GroqTranscriber:
 
             audio = np.concatenate(buffer)
             buffer, buffered, silent_samples = [], 0, 0
-            self._transcribe_remote(audio, utterance_id)
-            utterance_id += 1
+            self._transcribe_remote(audio, self._uid)
+            self._uid += 1
 
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()

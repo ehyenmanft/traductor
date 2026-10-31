@@ -55,12 +55,19 @@ def _cfg_key(env_var: str, cfg_field: str) -> str:
 
 
 def build_transcriber(args, audio_queue):
-    """Prioridad en auto: deepgram > groq > local, según keys presentes."""
+    """Prioridad en auto: deepgram (con NVIDIA de respaldo) > nvidia > groq > local, según keys presentes."""
     dg_key = _cfg_key("DEEPGRAM_API_KEY", "deepgram_api_key")
     gq_key = _cfg_key("GROQ_API_KEY", "groq_api_key")
+    nv_keys = _cfg_value("nvidia_api_keys", []) or []
+    from transcriber_nvidia import build_fallback
     engine = args.engine
     if engine == "auto":
-        engine = "deepgram" if dg_key else ("groq" if gq_key else "local")
+        engine = "deepgram" if dg_key else ("nvidia" if nv_keys else ("groq" if gq_key else "local"))
+    if engine == "nvidia":
+        nv = build_fallback(audio_queue, nv_keys, args.lang)
+        if nv:
+            return nv
+        engine = "groq" if gq_key else "local"
     if engine == "deepgram":
         try:
             from transcriber_deepgram import DeepgramTranscriber
@@ -68,7 +75,8 @@ def build_transcriber(args, audio_queue):
             return DeepgramTranscriber(
                 audio_queue, api_key=dg_key, language=args.lang,
                 endpointing_ms=int(_cfg_value("endpointing_ms", 300)),
-                keyterms=list(dict.fromkeys(terms)))
+                keyterms=list(dict.fromkeys(terms)),
+                fallback=build_fallback(audio_queue, nv_keys, args.lang))
         except Exception as e:
             print(f"[engine] Deepgram no disponible ({e}); probando siguiente.")
             engine = "groq" if gq_key else "local"
@@ -106,8 +114,8 @@ def main():
     ap.add_argument("--device", default="cpu", help="cpu, cuda o auto")
     ap.add_argument("--lang", default=None,
                     help="Forzar idioma origen (ej. en). Omitir = autodetectar")
-    ap.add_argument("--engine", default="auto", choices=["auto", "deepgram", "groq", "local"],
-                    help="auto: deepgram > groq > local según keys configuradas")
+    ap.add_argument("--engine", default="auto", choices=["auto", "nvidia", "deepgram", "groq", "local"],
+                    help="auto: deepgram (respaldo NVIDIA) > nvidia > groq > local según keys configuradas")
     ap.add_argument("--opacity", type=int, default=None,
                     help="Alfa del fondo del panel (0-255)")
     args = ap.parse_args()

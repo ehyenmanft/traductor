@@ -47,7 +47,7 @@ class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8765
     token: str = ""                     # token del dueño (usuario "principal")
-    keys_file: str = ""                 # config.json con deepgram_api_key / groq_api_key / glossary…
+    keys_file: str = ""                 # config.json con deepgram_api_key / nvidia_api_keys / groq_api_key / glossary…
     max_session_minutes: int = 0        # 0 = sin límite
     max_sessions: int = 4               # usuarios conectados a la vez (cada uno es un stream de Deepgram)
     users: dict = field(default_factory=dict)   # {"nombre": {"token": "…", "daily_minutes": 120}}
@@ -120,11 +120,13 @@ class Factories:
 
 def _deepgram(audio_q, keys, lang):
     from transcriber_deepgram import DeepgramTranscriber
+    from transcriber_nvidia import build_fallback
     terms = list(keys.get("keyterms") or []) + list((keys.get("glossary") or {}))
     return DeepgramTranscriber(
         audio_q, api_key=keys["deepgram_api_key"], language=lang,
         endpointing_ms=int(keys.get("endpointing_ms", 300)),
-        keyterms=list(dict.fromkeys(terms)))
+        keyterms=list(dict.fromkeys(terms)),
+        fallback=build_fallback(audio_q, keys.get("nvidia_api_keys"), lang))
 
 
 def _translator(target, keys, tone):
