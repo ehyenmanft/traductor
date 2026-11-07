@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -15,9 +17,23 @@ android {
         versionName = "1.0"
     }
 
+    // Firma de la versión para repartir: clave y contraseñas FUERA del repositorio (público).
+    // Ruta: variable FIRMA_PROPS o ~/android-dev/firma/firma.properties. Sin ella, release sale sin firmar.
+    val firma = file(System.getenv("FIRMA_PROPS") ?: "${System.getProperty("user.home")}/android-dev/firma/firma.properties")
+    signingConfigs {
+        if (firma.exists()) create("release") {
+            val p = Properties().apply { firma.inputStream().use { load(it) } }
+            storeFile = file(p.getProperty("storeFile"))
+            storePassword = p.getProperty("storePassword")
+            keyAlias = p.getProperty("keyAlias")
+            keyPassword = p.getProperty("keyPassword")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
         }
     }
     compileOptions {

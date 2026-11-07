@@ -53,3 +53,6 @@ android/build/
 android/app/build/
 android/local.properties
 *.keystore
+
+# APK para repartir (se entrega aparte, no va al repositorio)
+dist-movil/
