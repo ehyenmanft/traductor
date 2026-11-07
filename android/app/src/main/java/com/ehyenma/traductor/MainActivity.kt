@@ -78,6 +78,7 @@ class MainActivity : Activity() {
             mostrar()
         }
         findViewById<View>(R.id.idiomaBtn).setOnClickListener { elegirIdioma() }
+        findViewById<View>(R.id.origenBtn).setOnClickListener { elegirOrigen() }
         findViewById<View>(R.id.fuenteBtn).setOnClickListener { elegirFuente() }
     }
 
@@ -104,6 +105,8 @@ class MainActivity : Activity() {
         if (!dentro) return
         findViewById<View>(R.id.usuariosBtn).visibility = if (prefs.admin) View.VISIBLE else View.GONE
         findViewById<TextView>(R.id.idioma).text = LANGS.first { it.first == prefs.target }.second + "  ▾"
+        findViewById<TextView>(R.id.origen).text =
+            (if (prefs.source.isEmpty()) "Automático" else SOURCES.first { it.first == prefs.source }.second) + "  ▾"
         findViewById<TextView>(R.id.fuente).text = (if (prefs.mic) "Micrófono" else "Del móvil") + "  ▾"
         findViewById<TextView>(R.id.cuenta).text = "👤 ${prefs.user}" + if (prefs.admin) "  ·  administrador" else ""
         pintarEstado()
@@ -140,6 +143,15 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("Traducir al")
             .setSingleChoiceItems(LANGS.map { it.second }.toTypedArray(), actual) { d, i ->
                 prefs.target = LANGS[i].first; d.dismiss(); mostrar()
+            }.show()
+    }
+
+    private fun elegirOrigen() {
+        if (TranslatorService.running) return mensaje("Detén la traducción para cambiar el idioma.")
+        val actual = SOURCES.indexOfFirst { it.first == prefs.source }.coerceAtLeast(0)
+        AlertDialog.Builder(this).setTitle("¿En qué idioma hablan?")
+            .setSingleChoiceItems(SOURCES.map { it.second }.toTypedArray(), actual) { d, i ->
+                prefs.source = SOURCES[i].first; d.dismiss(); mostrar()
             }.show()
     }
 

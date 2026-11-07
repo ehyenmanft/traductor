@@ -10,6 +10,13 @@ val LANGS = listOf(
     "zh-cn" to "中文", "ru" to "Русский",
 )
 
+/** Idioma que se habla. "" = detectar (Deepgram multilingüe). Fijarlo afina la transcripción.
+ *  Solo códigos que Deepgram nova-3 acepta tal cual; chino y coreano van por la detección. */
+val SOURCES = listOf(
+    "" to "Detectar automáticamente", "en" to "English", "es" to "Español", "pt" to "Português",
+    "fr" to "Français", "de" to "Deutsch", "it" to "Italiano", "ru" to "Русский", "ja" to "日本語",
+)
+
 /** Sesión y ajustes. shortcut: la clave queda en las preferencias privadas de la app (solo esta app
  *  las lee); pasar a EncryptedSharedPreferences si se publica en Play Store. */
 class Prefs(ctx: Context) {
@@ -30,6 +37,9 @@ class Prefs(ctx: Context) {
     var target: String
         get() = sp.getString("target", "es") ?: "es"
         set(v) = sp.edit().putString("target", v).apply()
+    var source: String
+        get() = sp.getString("source", "") ?: ""
+        set(v) = sp.edit().putString("source", v).apply()
     var mic: Boolean
         get() = sp.getBoolean("mic", false)
         set(v) = sp.edit().putBoolean("mic", v).apply()

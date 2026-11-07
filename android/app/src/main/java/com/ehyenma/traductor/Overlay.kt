@@ -14,11 +14,13 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 
-/** Panel flotante sobre otras apps: original pequeño, traducción grande, botones ⏸/▶ y ✕. Hilo principal. */
-class Overlay(private val ctx: Context, onPause: () -> Unit, onClose: () -> Unit) {
+/** Panel flotante sobre otras apps: original pequeño, traducción grande; botones redondos para volver a
+ *  la app, pausar/reanudar y detener (iconos vectoriales: los emojis cambian de tamaño y color). Hilo principal. */
+class Overlay(private val ctx: Context, onOpen: () -> Unit, onPause: () -> Unit, onStop: () -> Unit) {
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val dp = ctx.resources.displayMetrics.density
     private val entries = LinkedHashMap<Int, Array<String>>()      // uid → [original, traducción]
@@ -26,7 +28,7 @@ class Overlay(private val ctx: Context, onPause: () -> Unit, onClose: () -> Unit
     private val status = text(11f, ENLACE).apply { text = "Conectando…" }
     private val original = text(12f, Color.parseColor("#B8B0D8")).apply { maxLines = 2 }
     private val translation = text(17f, Color.WHITE).apply { maxLines = 4 }
-    private val pauseBtn = roundButton("⏸", onPause)
+    private val pauseBtn = roundButton(R.drawable.ic_pausa, onPause)
     private val root = LinearLayout(ctx).apply {
         orientation = LinearLayout.VERTICAL
         val pad = (12 * dp).toInt()
@@ -39,10 +41,9 @@ class Overlay(private val ctx: Context, onPause: () -> Unit, onClose: () -> Unit
         addView(LinearLayout(ctx).apply {
             gravity = Gravity.CENTER_VERTICAL
             addView(status, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(pauseBtn)
-            addView(roundButton("✕", onClose).apply {
-                (layoutParams as? LinearLayout.LayoutParams)?.leftMargin = (8 * dp).toInt()
-            })
+            addView(roundButton(R.drawable.ic_abrir, onOpen).apply { contentDescription = "Volver a la app" })
+            addView(pauseBtn.apply { contentDescription = "Pausar o reanudar"; spaced() })
+            addView(roundButton(R.drawable.ic_stop, onStop).apply { contentDescription = "Detener la traducción"; spaced() })
         })
         addView(original)
         addView(translation)
@@ -65,11 +66,10 @@ class Overlay(private val ctx: Context, onPause: () -> Unit, onClose: () -> Unit
         setShadowLayer(3f, 0f, 1f, Color.BLACK)
     }
 
-    private fun roundButton(label: String, onClick: () -> Unit) = TextView(ctx).apply {
-        text = label
-        textSize = 16f
-        gravity = Gravity.CENTER
-        setTextColor(Color.WHITE)
+    private fun roundButton(icon: Int, onClick: () -> Unit) = ImageView(ctx).apply {
+        setImageResource(icon)
+        val pad = (10 * dp).toInt()
+        setPadding(pad, pad, pad, pad)
         background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(Color.argb(40, 255, 255, 255))
@@ -79,6 +79,8 @@ class Overlay(private val ctx: Context, onPause: () -> Unit, onClose: () -> Unit
         layoutParams = LinearLayout.LayoutParams(size, size)
         setOnClickListener { onClick() }
     }
+
+    private fun View.spaced() { (layoutParams as LinearLayout.LayoutParams).leftMargin = (8 * dp).toInt() }
 
     @SuppressLint("ClickableViewAccessibility")
     fun show() {
@@ -104,7 +106,7 @@ class Overlay(private val ctx: Context, onPause: () -> Unit, onClose: () -> Unit
     fun status(s: String) { status.text = s }
 
     fun setPaused(paused: Boolean) {
-        pauseBtn.text = if (paused) "▶" else "⏸"
+        pauseBtn.setImageResource(if (paused) R.drawable.ic_play else R.drawable.ic_pausa)
         (pauseBtn.background as GradientDrawable).apply {
             setColor(if (paused) Color.argb(110, 245, 185, 66) else Color.argb(40, 255, 255, 255))
             setStroke((1.5f * dp).toInt(), if (paused) AMBAR else VIOLETA)

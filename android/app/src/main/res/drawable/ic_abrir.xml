@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Volver a la app desde el panel flotante (abrir en grande) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M14,4h6v6M20,4l-8,8M18,14v5a1,1 0,0 1,-1 1H5a1,1 0,0 1,-1 -1V7a1,1 0,0 1,1 -1h5" android:strokeColor="#FFFFFF" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

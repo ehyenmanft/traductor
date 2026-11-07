@@ -180,7 +180,7 @@
                 android:textSize="13sp"
                 android:visibility="gone" />
 
-            <!-- Idioma y fuente del audio -->
+            <!-- Idiomas: el que se habla y al que se traduce -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -190,13 +190,13 @@
                 android:padding="16dp">
 
                 <LinearLayout
-                    android:id="@+id/idiomaBtn"
+                    android:id="@+id/origenBtn"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:orientation="vertical">
-                    <TextView style="@style/Rotulo" android:text="TRADUCIR AL" />
-                    <TextView android:id="@+id/idioma" style="@style/Valor" android:text="Español  ▾" />
+                    <TextView style="@style/Rotulo" android:text="HABLAN EN" />
+                    <TextView android:id="@+id/origen" style="@style/Valor" android:text="Automático  ▾" />
                 </LinearLayout>
 
                 <View
@@ -207,14 +207,27 @@
                     android:background="#1FFFFFFF" />
 
                 <LinearLayout
-                    android:id="@+id/fuenteBtn"
+                    android:id="@+id/idiomaBtn"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:orientation="vertical">
-                    <TextView style="@style/Rotulo" android:text="AUDIO" />
-                    <TextView android:id="@+id/fuente" style="@style/Valor" android:text="Del móvil  ▾" />
+                    <TextView style="@style/Rotulo" android:text="TRADUCIR AL" />
+                    <TextView android:id="@+id/idioma" style="@style/Valor" android:text="Español  ▾" />
                 </LinearLayout>
+            </LinearLayout>
+
+            <!-- Fuente del audio -->
+            <LinearLayout
+                android:id="@+id/fuenteBtn"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/tarjeta"
+                android:orientation="vertical"
+                android:padding="16dp">
+                <TextView style="@style/Rotulo" android:text="AUDIO" />
+                <TextView android:id="@+id/fuente" style="@style/Valor" android:text="Del móvil  ▾" />
             </LinearLayout>
 
             <!-- Consejos -->
@@ -231,7 +244,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
                     android:lineSpacingExtra="3dp"
-                    android:text="Los subtítulos flotan sobre tus apps y juegos. Al iniciar, Android pide permiso para grabar: elige Pantalla completa (solo se usa el audio).\n\nLas llamadas de voz (Discord, WhatsApp) Android no deja capturarlas: para eso elige Micrófono.\n\nEl botón ⏸ del panel flotante pausa la traducción sin gastar nada."
+                    android:text="Los subtítulos flotan sobre tus apps y juegos. Al iniciar, Android pide permiso para grabar: elige Pantalla completa (solo se usa el audio).\n\nLas llamadas de voz (Discord, WhatsApp) Android no deja capturarlas: para eso elige Micrófono.\n\nDesde el panel flotante puedes volver a la app, pausar (sin gastar nada) o detener."
                     android:textColor="@color/tenue"
                     android:textSize="13sp" />
             </LinearLayout>

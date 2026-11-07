@@ -21,6 +21,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import android.widget.Toast
 import okhttp3.Request
 import okhttp3.Response
@@ -45,6 +46,7 @@ class TranslatorService : Service() {
         const val EXTRA_MIC = "mic"
         private const val CHANNEL = "traductor"
         private const val FRAME_BYTES = 3200             // 100 ms de PCM16 a 16 kHz
+        private const val TAG = "Traductor"
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -58,6 +60,7 @@ class TranslatorService : Service() {
     @Volatile private var stopping = false
     @Volatile private var fatal = false
     private var backoff = 1000L
+    private val reconnect = Runnable { connect() }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -75,7 +78,7 @@ class TranslatorService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        overlay = Overlay(this, onPause = ::togglePause, onClose = ::stopSelf).also { it.show() }
+        overlay = Overlay(this, onOpen = ::abrirApp, onPause = ::togglePause, onStop = ::stopSelf).also { it.show() }
         record?.startRecording()
         thread(name = "audio") { audioLoop() }
         connect()
@@ -122,7 +125,7 @@ class TranslatorService : Service() {
         val buf = ByteArray(FRAME_BYTES)
         while (!stopping) {
             val n = record?.read(buf, 0, buf.size) ?: -1
-            if (n <= 0 || paused) { Thread.sleep(40); continue }
+            if (n <= 0 || paused) { if (n <= 0) Thread.sleep(40); continue }   // en pausa se lee y se descarta
             val w = ws
             if (ready && w != null && w.queueSize() < 64_000) w.send(buf.toByteString(0, n))   // red lenta: se descarta
         }
@@ -132,18 +135,23 @@ class TranslatorService : Service() {
 
     private fun connect() {
         if (stopping || paused || fatal) return
+        Log.i(TAG, "conectando")
         ui { status("🔌 Conectando…") }
         val req = Request.Builder().url(prefs.server).build()
         ws = Api.client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 webSocket.send(JSONObject().put("type", "hello").put("version", 1)
                     .put("user", prefs.user).put("password", prefs.password)
-                    .put("target", prefs.target).put("tone", "gamer").put("lang", JSONObject.NULL)
+                    .put("target", prefs.target).put("tone", "gamer")
+                    .put("lang", prefs.source.ifEmpty { null } ?: JSONObject.NULL)
                     .put("dub", false).put("dub_gate", false).toString())
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                // la conexión cerrada al pausar aún puede recibir un aviso: no debe tocar el estado de la nueva
+                if (webSocket !== ws) return
                 val m = runCatching { JSONObject(text) }.getOrNull() ?: return
+                if (m.optString("type") in setOf("ready", "error")) Log.i(TAG, "servidor: $text")
                 when (m.optString("type")) {
                     "ready" -> { ready = true; backoff = 1000; ui { status("✅ Conectado") } }
                     "upsert" -> ui { upsert(m.optInt("uid"), m.optString("text")) }
@@ -170,27 +178,37 @@ class TranslatorService : Service() {
 
     private fun dropped(webSocket: WebSocket) {
         if (ws !== webSocket) return                       // una conexión vieja (pausa / reconexión)
+        Log.i(TAG, "conexión cerrada (pausa=$paused, fatal=$fatal)")
         ready = false
         ws = null
         if (stopping || paused || fatal) return
         ui { status("⚠️ Sin conexión; reconectando…") }
-        main.postDelayed(::connect, backoff)
+        main.postDelayed(reconnect, backoff)
         backoff = minOf(backoff * 2, 15_000)
     }
 
     private fun togglePause() {
         paused = !paused
+        Log.i(TAG, if (paused) "pausa" else "reanudar")
         overlay?.setPaused(paused)
+        main.removeCallbacks(reconnect)                    // ni una reconexión pendiente de antes
         if (paused) {
+            // la captura sigue abierta (se descarta lo leído): reiniciarla falla en algunos móviles
             ready = false
-            ws?.close(1000, "pausa")
+            val old = ws
             ws = null
-            record?.stop()
+            old?.close(1000, "pausa")
             overlay?.status("⏸ En pausa: sin envío ni gasto de APIs")
         } else {
-            record?.startRecording()
+            fatal = false                                  // reanudar es una orden del usuario: siempre reintenta
+            backoff = 1000
             connect()
         }
+    }
+
+    private fun abrirApp() {
+        startActivity(Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
     }
 
     private fun ui(block: Overlay.() -> Unit) = main.post { overlay?.block() }
