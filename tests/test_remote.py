@@ -263,6 +263,9 @@ class Security(Base):
 
 class Resilience(Base):
     def test_client_reconnects_after_server_restart(self):
+        # parar el servidor dentro del proceso no cierra los sockets ya abiertos (en AWS el proceso muere y sí):
+        # el cliente lo detecta por su timeout de escucha, aquí acortado
+        p = mock.patch.object(lc, "RECV_TIMEOUT", 2.0); p.start(); self.addCleanup(p.stop)
         c = self.client(target="es"); self.assertTrue(wait_for(lambda: c.connected))
         port = self.s.port
         self.s.stop()
@@ -388,25 +391,108 @@ class MultiUser(Base):
 
 
 class UsersScript(unittest.TestCase):
-    def test_add_list_remove(self):
+    def test_superuser_add_passwd_disable_remove(self):
         import importlib, io, tempfile
-        from contextlib import redirect_stdout
+        from contextlib import redirect_stdout, redirect_stderr
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "deploy_live"))
         users = importlib.import_module("users")
         users.HERE = tempfile.mkdtemp()
         users.PATH = os.path.join(users.HERE, "live_config.json")
-        json.dump({"token": TOKEN, "public_url": "wss://x.sslip.io"}, open(users.PATH, "w"))
-        out = io.StringIO()
-        with redirect_stdout(out):
-            self.assertEqual(users.main(["add", "amigo", "--minutes", "90"]), 0)
-        cfg = json.load(open(users.PATH))
-        tok = cfg["users"]["amigo"]["token"]
-        self.assertIn(tok, out.getvalue()); self.assertIn("wss://x.sslip.io", out.getvalue())
+        json.dump({"token": TOKEN, "users": {"viejo": {"token": "x" * 20}}}, open(users.PATH, "w"))
+        pw = lambda value: (lambda prompt: value)                                  # simula getpass
+        run = lambda argv, value="clave-segura-1": users.main(argv, ask=pw(value))
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(run(["superuser", "jefe"]), 0)
+            self.assertEqual(run(["add", "amigo", "--minutes", "90"]), 0)
+            self.assertEqual(run(["add", "corta"], "123"), 1)                       # clave < 8
+            self.assertEqual(run(["add", "con espacio"]), 1)
+            self.assertEqual(run(["superuser", "viejo"], "otra-clave-2"), 0)        # usuario de token → admin con clave
         sc = srv.ServerConfig(token=TOKEN, path=users.PATH)
-        self.assertEqual(sc.find_user(tok)[0], "amigo")
-        self.assertEqual(sc.find_user(tok)[1]["daily_minutes"], 90)
+        self.assertEqual(sc.find_login("amigo", "clave-segura-1")[1]["daily_minutes"], 90)
+        self.assertTrue(sc.find_login("jefe", "clave-segura-1")[1]["admin"])
+        self.assertTrue(sc.find_login("viejo", "otra-clave-2")[1]["admin"])
+        self.assertIsNone(sc.find_login("amigo", "mala-clave"))
+        raw = open(users.PATH).read(); self.assertNotIn("clave-segura-1", raw)     # nunca en texto
         with redirect_stdout(io.StringIO()):
-            self.assertEqual(users.main(["add", "principal"]), 1)
-            self.assertEqual(users.main(["remove", "amigo"]), 0)
-            self.assertEqual(users.main(["remove", "amigo"]), 1)
-        self.assertIsNone(sc.find_user(tok))
+            run(["disable", "amigo"])
+        self.assertEqual(sc.find_login("amigo", "clave-segura-1"), "disabled")
+        with redirect_stdout(io.StringIO()):
+            run(["passwd", "amigo"], "nueva-clave-3"); run(["enable", "amigo"])
+        self.assertIsNotNone(sc.find_login("amigo", "nueva-clave-3"))
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(run(["remove", "amigo"]), 0)
+        self.assertIsNone(sc.find_login("amigo", "nueva-clave-3"))
+
+
+def raw_request(port, msg):
+    ws = websocket.create_connection(f"ws://127.0.0.1:{port}", timeout=5)
+    ws.send(json.dumps({"version": 1, **msg}))
+    out = json.loads(ws.recv()); ws.close()
+    return out
+
+
+class Accounts(Base):
+    ADMIN_PW, USER_PW = "clave-admin-1", "clave-amigo-1"
+
+    def setUp(self):
+        super().setUp()
+        import live_users as U
+        self.cfg.path = os.path.join(os.path.dirname(self.keysfile), "live_config.json")
+        data = {"token": TOKEN, "users": {}}
+        U.add_user(data, "jefe", self.ADMIN_PW, admin=True)
+        U.add_user(data, "amigo", self.USER_PW)
+        json.dump(data, open(self.cfg.path, "w"))
+
+    def admin(self, **msg):
+        return raw_request(self.s.port, {"type": "admin", "user": "jefe", "password": self.ADMIN_PW, **msg})
+
+    def test_login_reports_role_and_rejects_bad_password(self):
+        r = raw_request(self.s.port, {"type": "login", "user": "jefe", "password": self.ADMIN_PW})
+        self.assertEqual((r["type"], r["admin"]), ("login_result", True))
+        r = raw_request(self.s.port, {"type": "login", "user": "amigo", "password": self.USER_PW})
+        self.assertFalse(r["admin"])
+        r = raw_request(self.s.port, {"type": "login", "user": "amigo", "password": "mala"})
+        self.assertEqual((r["type"], r["fatal"]), ("error", True)); self.assertIn("incorrectos", r["message"])
+
+    def test_user_and_password_translate_like_token(self):
+        c = self.client(token={"user": "amigo", "password": self.USER_PW})
+        self.assertTrue(wait_for(lambda: c.connected))
+        self.audio(c)
+        self.assertTrue(wait_for(lambda: any(t[1] == "ES:hello world." for t in c.ev["trans"])))
+        self.assertIn("amigo", self.s.server.sessions)
+
+    def test_lockout_after_five_failures(self):
+        for _ in range(5):
+            raw_request(self.s.port, {"type": "login", "user": "amigo", "password": "mala"})
+        r = raw_request(self.s.port, {"type": "login", "user": "amigo", "password": self.USER_PW})
+        self.assertIn("Demasiados intentos", r["message"])                         # ni con la clave buena
+
+    def test_admin_manages_users_and_kicks_on_disable(self):
+        r = self.admin(action="list")
+        self.assertEqual({u["name"] for u in r["users"]}, {"jefe", "amigo"})
+        self.assertNotIn("pbkdf2", json.dumps(r))                                 # el panel nunca ve hashes
+        r = self.admin(action="add", name="nuevo", new_password="clave-nueva-1", minutes=30)
+        self.assertTrue(r["ok"]); self.assertIn("nuevo", [u["name"] for u in r["users"]])
+        self.assertFalse(self.admin(action="add", name="corto", new_password="123")["ok"])
+        c = self.client(token={"user": "amigo", "password": self.USER_PW}); self.assertTrue(wait_for(lambda: c.connected))
+        r = self.admin(action="list"); self.assertTrue(next(u for u in r["users"] if u["name"] == "amigo")["online"])
+        self.assertTrue(self.admin(action="disable", name="amigo")["ok"])
+        self.assertTrue(wait_for(lambda: c.ev["fatal"])); self.assertIn("retirado", c.ev["fatal"][0])
+        r = raw_request(self.s.port, {"type": "login", "user": "amigo", "password": self.USER_PW})
+        self.assertIn("deshabilitado", r["message"])
+        self.assertTrue(self.admin(action="enable", name="amigo")["ok"])
+        self.assertTrue(self.admin(action="passwd", name="amigo", new_password="otra-clave-9")["ok"])
+        r = raw_request(self.s.port, {"type": "login", "user": "amigo", "password": "otra-clave-9"})
+        self.assertEqual(r["type"], "login_result")
+        self.assertTrue(self.admin(action="delete", name="amigo")["ok"])
+        r = raw_request(self.s.port, {"type": "login", "user": "amigo", "password": "otra-clave-9"})
+        self.assertEqual(r["type"], "error")
+
+    def test_admin_cannot_lock_himself_out_and_users_cannot_admin(self):
+        for action in ("disable", "delete"):
+            r = self.admin(action=action, name="jefe"); self.assertFalse(r["ok"]); self.assertIn("ti mismo", r["error"])
+        self.assertFalse(self.admin(action="set_admin", name="jefe", admin=False)["ok"])
+        r = raw_request(self.s.port, {"type": "admin", "user": "amigo", "password": self.USER_PW, "action": "list"})
+        self.assertEqual(r["type"], "error"); self.assertIn("administrador", r["message"])
+        r = raw_request(self.s.port, {"type": "admin", "token": TOKEN, "action": "list"})        # token antiguo: no
+        self.assertEqual(r["type"], "error")
