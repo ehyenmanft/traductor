@@ -23,15 +23,19 @@ class Overlay(private val ctx: Context, onPause: () -> Unit, onClose: () -> Unit
     private val dp = ctx.resources.displayMetrics.density
     private val entries = LinkedHashMap<Int, Array<String>>()      // uid → [original, traducción]
 
-    private val status = text(11f, Color.parseColor("#9BE8FF")).apply { text = "Conectando…" }
-    private val original = text(12f, Color.parseColor("#B8C0CC")).apply { maxLines = 2 }
+    private val status = text(11f, ENLACE).apply { text = "Conectando…" }
+    private val original = text(12f, Color.parseColor("#B8B0D8")).apply { maxLines = 2 }
     private val translation = text(17f, Color.WHITE).apply { maxLines = 4 }
     private val pauseBtn = roundButton("⏸", onPause)
     private val root = LinearLayout(ctx).apply {
         orientation = LinearLayout.VERTICAL
         val pad = (12 * dp).toInt()
         setPadding(pad, (8 * dp).toInt(), pad, pad)
-        background = GradientDrawable().apply { setColor(Color.argb(205, 16, 20, 26)); cornerRadius = 18 * dp }
+        background = GradientDrawable().apply {
+            setColor(Color.argb(215, 14, 11, 31))          // noche índigo de la app, translúcida
+            setStroke((1 * dp).toInt(), Color.argb(90, 167, 139, 250))
+            cornerRadius = 18 * dp
+        }
         addView(LinearLayout(ctx).apply {
             gravity = Gravity.CENTER_VERTICAL
             addView(status, LinearLayout.LayoutParams(0, -2, 1f))
@@ -66,7 +70,11 @@ class Overlay(private val ctx: Context, onPause: () -> Unit, onClose: () -> Unit
         textSize = 16f
         gravity = Gravity.CENTER
         setTextColor(Color.WHITE)
-        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.argb(60, 255, 255, 255)) }
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.argb(40, 255, 255, 255))
+            setStroke((1.5f * dp).toInt(), VIOLETA)
+        }
         val size = (40 * dp).toInt()                    // táctil cómodo (≥ 40 dp)
         layoutParams = LinearLayout.LayoutParams(size, size)
         setOnClickListener { onClick() }
@@ -97,8 +105,10 @@ class Overlay(private val ctx: Context, onPause: () -> Unit, onClose: () -> Unit
 
     fun setPaused(paused: Boolean) {
         pauseBtn.text = if (paused) "▶" else "⏸"
-        (pauseBtn.background as GradientDrawable).setColor(
-            if (paused) Color.argb(150, 255, 140, 0) else Color.argb(60, 255, 255, 255))
+        (pauseBtn.background as GradientDrawable).apply {
+            setColor(if (paused) Color.argb(110, 245, 185, 66) else Color.argb(40, 255, 255, 255))
+            setStroke((1.5f * dp).toInt(), if (paused) AMBAR else VIOLETA)
+        }
     }
 
     fun upsert(uid: Int, text: String) { entry(uid)[0] = text; render() }

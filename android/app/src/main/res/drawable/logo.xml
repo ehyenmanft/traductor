@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Logo dentro de la app: cuadrado redondeado (esquinas proporcionales) + dos globos de diálogo: el de atrás (translúcido) con texto traducido, el de delante con ondas de voz.
+     Mismo dibujo que el icono, a tamaño completo. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M26,0H82A26,26 0,0 1,108 26V82A26,26 0,0 1,82 108H26A26,26 0,0 1,0 82V26A26,26 0,0 1,26 0Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:endColor="#EC4899" android:endX="108" android:endY="108"
+                android:startColor="#7C3AED" android:startX="0" android:startY="0" android:type="linear" />
+        </aapt:attr>
+    </path>
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="1.0"
+        android:scaleY="1.0">
+        <!-- globo de atrás: la traducción -->
+        <path
+            android:fillColor="#8CFFFFFF"
+            android:pathData="M56,24H76A10,10 0,0 1,86 34V44A10,10 0,0 1,76 54H56A10,10 0,0 1,46 44V34A10,10 0,0 1,56 24Z" />
+        <path
+            android:fillColor="#8CFFFFFF"
+            android:pathData="M74,50L82,64L66,53Z" />
+        <path
+            android:pathData="M56,34H76M56,42H69"
+            android:strokeWidth="3.5"
+            android:strokeColor="#7C3AED"
+            android:strokeLineCap="round" />
+        <!-- globo de delante: la voz -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M35,40H59A11,11 0,0 1,70 51V65A11,11 0,0 1,59 76H35A11,11 0,0 1,24 65V51A11,11 0,0 1,35 40Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M30,70L26,87L46,75Z" />
+        <path
+            android:pathData="M36,54V62M43,49V67M50,45V71M57,51V65"
+            android:strokeWidth="4.5"
+            android:strokeColor="#7C3AED"
+            android:strokeLineCap="round" />
+    </group>
+</vector>

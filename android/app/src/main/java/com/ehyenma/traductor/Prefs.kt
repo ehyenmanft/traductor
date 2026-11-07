@@ -36,10 +36,3 @@ class Prefs(ctx: Context) {
 
     fun logout() = sp.edit().remove("user").remove("password").remove("admin").apply()
 }
-
-/** Quien pega la dirección completa sobre un "wss://" ya escrito deja "wss://wss://…". */
-fun cleanServer(s: String): String {
-    var out = s.trim()
-    while (out.lowercase().startsWith("wss://wss://")) out = out.substring(6)
-    return out
-}

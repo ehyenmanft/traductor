@@ -11,9 +11,10 @@
 
     <application
         android:allowBackup="false"
-        android:icon="@drawable/ic_launcher"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:label="Traductor en vivo"
-        android:theme="@android:style/Theme.Material">
+        android:theme="@style/Tema">
 
         <activity
             android:name=".MainActivity"

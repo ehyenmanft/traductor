@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dos globos de diálogo: el de atrás (translúcido) con texto traducido, el de delante con ondas de voz.
+     Reducido al 80 % para quedar dentro de la zona segura del icono adaptativo. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.8"
+        android:scaleY="0.8">
+        <!-- globo de atrás: la traducción -->
+        <path
+            android:fillColor="#8CFFFFFF"
+            android:pathData="M56,24H76A10,10 0,0 1,86 34V44A10,10 0,0 1,76 54H56A10,10 0,0 1,46 44V34A10,10 0,0 1,56 24Z" />
+        <path
+            android:fillColor="#8CFFFFFF"
+            android:pathData="M74,50L82,64L66,53Z" />
+        <path
+            android:pathData="M56,34H76M56,42H69"
+            android:strokeWidth="3.5"
+            android:strokeColor="#7C3AED"
+            android:strokeLineCap="round" />
+        <!-- globo de delante: la voz -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M35,40H59A11,11 0,0 1,70 51V65A11,11 0,0 1,59 76H35A11,11 0,0 1,24 65V51A11,11 0,0 1,35 40Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M30,70L26,87L46,75Z" />
+        <path
+            android:pathData="M36,54V62M43,49V67M50,45V71M57,51V65"
+            android:strokeWidth="4.5"
+            android:strokeColor="#7C3AED"
+            android:strokeLineCap="round" />
+    </group>
+</vector>
