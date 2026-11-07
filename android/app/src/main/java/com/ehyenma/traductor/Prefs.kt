@@ -40,6 +40,19 @@ class Prefs(ctx: Context) {
     var source: String
         get() = sp.getString("source", "") ?: ""
         set(v) = sp.edit().putString("source", v).apply()
+    // estilo del panel flotante
+    var opacity: Int                                       // 0-255 del fondo (el texto siempre opaco)
+        get() = sp.getInt("opacity", 215)
+        set(v) = sp.edit().putInt("opacity", v).apply()
+    var fontSize: Int                                      // sp de la traducción
+        get() = sp.getInt("fontSize", 17)
+        set(v) = sp.edit().putInt("fontSize", v).apply()
+    var colorIndex: Int
+        get() = sp.getInt("color", 0)
+        set(v) = sp.edit().putInt("color", v).apply()
+    var showOriginal: Boolean
+        get() = sp.getBoolean("showOriginal", true)
+        set(v) = sp.edit().putBoolean("showOriginal", v).apply()
     var mic: Boolean
         get() = sp.getBoolean("mic", false)
         set(v) = sp.edit().putBoolean("mic", v).apply()

@@ -78,7 +78,7 @@ class TranslatorService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        overlay = Overlay(this, onOpen = ::abrirApp, onPause = ::togglePause, onStop = ::stopSelf).also { it.show() }
+        overlay = Overlay(this, prefs, onOpen = ::abrirApp, onPause = ::togglePause, onStop = ::stopSelf).also { it.show() }
         record?.startRecording()
         thread(name = "audio") { audioLoop() }
         connect()
@@ -123,11 +123,18 @@ class TranslatorService : Service() {
 
     private fun audioLoop() {
         val buf = ByteArray(FRAME_BYTES)
+        var frames = 0; var sent = 0; var peak = 0
         while (!stopping) {
             val n = record?.read(buf, 0, buf.size) ?: -1
             if (n <= 0 || paused) { if (n <= 0) Thread.sleep(40); continue }   // en pausa se lee y se descarta
+            for (i in 0 until n - 1 step 2) peak = maxOf(peak, kotlin.math.abs((buf[i].toInt() and 0xFF) or (buf[i + 1].toInt() shl 8)))
             val w = ws
-            if (ready && w != null && w.queueSize() < 64_000) w.send(buf.toByteString(0, n))   // red lenta: se descarta
+            if (ready && w != null && w.queueSize() < 64_000) { w.send(buf.toByteString(0, n)); sent++ }   // red lenta: se descarta
+            if (++frames % 30 == 0) {                      // cada ~3 s: ¿llega sonido o solo silencio?
+                Log.i(TAG, "audio: nivel máx $peak/32767, enviados $sent de 30")
+                if (peak < 30 && ready) ui { status("🔇 No llega sonido de las apps") }
+                peak = 0; sent = 0
+            }
         }
     }
 
