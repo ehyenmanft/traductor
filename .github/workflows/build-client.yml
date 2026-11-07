@@ -4,7 +4,7 @@ name: Compilar cliente de Windows
 # Descarga el resultado en: Actions → la última ejecución → Artifacts → TraductorCliente-windows
 on:
   push:
-    branches: [claude/traductor-cliente-aws, claude/traductor-multiusuario]
+    branches: [claude/traductor-cliente-aws, claude/traductor-multiusuario, claude/traductor-movil]
   workflow_dispatch:
 
 jobs:

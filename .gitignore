@@ -46,3 +46,10 @@ live_config.json.tmp
 usage.json
 usage.json.tmp
 .venv-live/
+
+# Android: compilación local
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.keystore
