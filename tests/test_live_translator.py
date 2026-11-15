@@ -188,6 +188,43 @@ class Translator(unittest.TestCase):
         with mock.patch.object(lt.requests, "post", lambda *a, **k: next(seq)):
             self.assertEqual(t.translate_final("hello everyone", "en"), "Hola a todos")
 
+    def test_rate_limit_jumps_to_next_model_at_once_without_opening_breaker(self):
+        class R:
+            def __init__(self, code): self.status_code, self.headers, self.text = code, {"retry-after": "3"}, ""
+            def raise_for_status(self): pass
+            def json(self): return {"choices": [{"message": {"content": "Hola a todos"}}]}
+        used = []
+        def post(url, headers=None, json=None, **k):
+            used.append(json["model"]); return R(429 if json["model"] == "a" else 200)
+        t = make(final_models=["a", "b"])
+        with mock.patch.object(lt.requests, "post", post):
+            start = time.monotonic()
+            for i in range(6):
+                self.assertEqual(t.translate_final(f"hello everyone {i}", "en"), "Hola a todos")
+        self.assertLess(time.monotonic() - start, 1.0)                           # sin esperas de 3 s
+        self.assertEqual(used[:2], ["a", "b"]); self.assertTrue(t.groq_ok)       # 429 ≠ caída
+
+    def test_partial_rate_limit_pauses_only_what_groq_asks_and_skips_context(self):
+        class R:
+            def __init__(self, code): self.status_code, self.headers, self.text = code, {"retry-after": "1"}, ""
+            def raise_for_status(self): pass
+            def json(self): return {"choices": [{"message": {"content": "Hola"}}]}
+        sent = []
+        t = make(); t.context.append(("before", "antes"))
+        with mock.patch.object(lt.requests, "post", lambda *a, json=None, **k: (sent.append(json), R(429))[1]):
+            self.assertEqual(t.translate_partial("hello there my friend", "en"), "")
+        self.assertLess(t._partial_pause - time.monotonic(), 1.1)                 # 1 s, no 8 s
+        self.assertNotIn("antes", str(sent[0]["messages"]))                       # parcial sin contexto (menos tokens)
+
+    def test_arabic_model_is_never_chosen(self):
+        listing = type("L", (), {"status_code": 200, "ok": True, "raise_for_status": lambda self: None,
+                                 "json": lambda self: {"data": [{"id": "allam-2-7b"}, {"id": "openai/gpt-oss-20b"},
+                                                                {"id": "openai/gpt-oss-120b"}]}})()
+        t = make()
+        with mock.patch.object(lt.requests, "get", return_value=listing):
+            t._discover_models()
+        self.assertNotIn("allam-2-7b", t.final_models + [t.partial_model])
+
     def test_model_choice_does_not_confuse_120b_with_20b(self):
         listing = type("L", (), {"status_code": 200, "ok": True, "raise_for_status": lambda self: None,
                                  "json": lambda self: {"data": [{"id": "openai/gpt-oss-120b"}, {"id": "openai/gpt-oss-20b"},

@@ -1,5 +1,6 @@
 {
   "deepgram_api_key": "TU_API_KEY_DEEPGRAM_AQUI",
+  "nvidia_api_keys": [],
   "groq_api_key": "",
   "opacity": 90,
   "font_size": 13,

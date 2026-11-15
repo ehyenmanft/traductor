@@ -4,7 +4,7 @@ name: Compilar cliente de Windows
 # Descarga el resultado en: Actions → la última ejecución → Artifacts → TraductorCliente-windows
 on:
   push:
-    branches: [claude/traductor-cliente-aws]
+    branches: [claude/traductor-cliente-aws, claude/traductor-multiusuario]
   workflow_dispatch:
 
 jobs:
@@ -59,4 +59,17 @@ jobs:
         with:
           name: TraductorCliente-windows
           path: TraductorCliente-windows.zip
+          retention-days: 30
+
+      - name: Instalador (Inno Setup)
+        shell: bash
+        run: |
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          [ -f "$ISCC" ] || choco install innosetup -y --no-progress
+          "$ISCC" installer-cliente.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TraductorCliente-Setup
+          path: Output/TraductorCliente-Setup.exe
           retention-days: 30

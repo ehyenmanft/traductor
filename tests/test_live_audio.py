@@ -62,6 +62,17 @@ class Resample(unittest.TestCase):
         total = sum(len(r.process(tone(300, 0.1, 48000))) for _ in range(30))
         self.assertAlmostEqual(total, 3 * 16000, delta=4)
 
+    def test_paused_capture_queues_nothing_and_dub_gate_does_not_resume_it(self):
+        cap = ac.SystemAudioCapture()
+        pcm = (tone(300, 0.1, 16000) * 10000).astype(np.int16).tobytes()
+        cap.set_paused(True)
+        cap.set_muted(False)                                  # el doblador abre su compuerta: sigue en pausa
+        cap._process(pcm, 1, ac.Resampler(16000))
+        self.assertTrue(cap.audio_queue.empty())
+        cap.set_paused(False)
+        cap._process(pcm, 1, ac.Resampler(16000))
+        self.assertEqual(cap.audio_queue.qsize(), 1)
+
 
 def feed(q, speech_s, silence_s, chunk=0.1, amp=0.2, rate=16000):
     n = int(chunk * rate)
