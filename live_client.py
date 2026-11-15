@@ -26,7 +26,9 @@ class RemoteSession:
     def __init__(self, url: str, token: str, audio_queue: "queue.Queue", settings: dict | None = None,
                  on_upsert=None, on_trans=None, on_notice=None, on_status=None, on_dub=None,
                  on_gate=None, on_dub_stop=None, on_fatal=None, max_backoff: float = 15.0):
-        self.url, self.token, self.audio_queue = url, token, audio_queue
+        self.url, self.audio_queue = url, audio_queue
+        # token antiguo (texto) o {"user": …, "password": …}
+        self.credentials = dict(token) if isinstance(token, dict) else {"token": token}
         self.settings = dict(settings or {})
         self.cb = dict(upsert=on_upsert, trans=on_trans, notice=on_notice, status=on_status,
                        dub=on_dub, gate=on_gate, dub_stop=on_dub_stop, fatal=on_fatal)
@@ -106,7 +108,7 @@ class RemoteSession:
 
     def _connect(self):
         ws = websocket.create_connection(self.url, timeout=10, enable_multithread=True)
-        ws.send(P.encode({"type": "hello", "version": P.PROTOCOL_VERSION, "token": self.token,
+        ws.send(P.encode({"type": "hello", "version": P.PROTOCOL_VERSION, **self.credentials,
                           **self.settings}))
         while True:                                   # esperar 'ready' (o un error)
             raw = ws.recv()

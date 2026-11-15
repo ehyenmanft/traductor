@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Paleta "voz": noche índigo con violeta y fucsia (sonido, conversación) -->
+<resources>
+    <color name="fondo">#0E0B1F</color>
+    <color name="texto">#EDE9FE</color>
+    <color name="tenue">#9A93B8</color>
+    <color name="violeta">#A78BFA</color>
+    <color name="fucsia">#F472B6</color>
+    <color name="enlace">#C4B5FD</color>
+    <color name="rojo">#FF5C7A</color>
+    <color name="ambar">#F5B942</color>
+</resources>

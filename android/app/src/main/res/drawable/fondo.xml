@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Noche índigo con un brillo violeta arriba y fucsia abajo -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <solid android:color="@color/fondo" />
+        </shape>
+    </item>
+    <item>
+        <shape>
+            <gradient
+                android:centerX="0.05"
+                android:centerY="0.0"
+                android:endColor="#000E0B1F"
+                android:gradientRadius="90%p"
+                android:startColor="#667C3AED"
+                android:type="radial" />
+        </shape>
+    </item>
+    <item>
+        <shape>
+            <gradient
+                android:centerX="1.0"
+                android:centerY="1.0"
+                android:endColor="#000E0B1F"
+                android:gradientRadius="100%p"
+                android:startColor="#55EC4899"
+                android:type="radial" />
+        </shape>
+    </item>
+</layer-list>

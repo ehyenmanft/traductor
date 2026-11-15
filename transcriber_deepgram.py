@@ -81,9 +81,10 @@ class DeepgramTranscriber:
     @staticmethod
     def _too_long(text: str) -> bool:
         """Quien habla sin pausas (un streamer, un narrador) no cierra nunca la frase y nada se traduce hasta
-        el final: se corta cada ~260 caracteres en un punto, o a los 450 pase lo que pase."""
+        el final: se corta en un punto a partir de ~120 caracteres (unos 6 s de habla), o a los 220 pase lo
+        que pase. La traducción final (con contexto de las frases anteriores) llega así a tiempo."""
         n = len(text)
-        return n >= 450 or (n >= 260 and text.rstrip()[-1:] in ".?!…。！？")
+        return n >= 220 or (n >= 120 and text.rstrip()[-1:] in ".?!…。！？")
 
     def handle_message(self, msg: dict):
         if msg.get("type") == "UtteranceEnd":

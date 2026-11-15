@@ -7,7 +7,7 @@ Configuración (config.json junto al .exe):
   {"server": "ws://127.0.0.1:8765", "token": "…",
    "ssh": {"host": "IP-DE-AWS", "user": "ubuntu", "key": "C:\\ruta\\clave.pem"}}
 Con la sección "ssh" el cliente abre solo el túnel cifrado hacia AWS.
-Sin túnel (usuarios invitados): {"server": "wss://IP.sslip.io", "token": "…"} (HTTPS con Caddy en AWS).
+Sin túnel (usuarios invitados): {"server": "wss://IP.sslip.io", "user": "…", "password": "…"} (HTTPS con Caddy en AWS).
 """
 import argparse
 import json
@@ -52,16 +52,20 @@ class ClientError(Exception):
 def build(cfg: dict, app: QApplication, no_tunnel: bool = False, capture_factory=SystemAudioCapture,
           player=None, config_path: str = ""):
     """Crea todas las piezas del cliente y las conecta (sin entrar al bucle de Qt ni arrancar red)."""
-    token = str(cfg.get("token", "")).strip()
     url = str(cfg.get("server", "ws://127.0.0.1:8765")).strip()
     while url.lower().startswith(("wss://wss://", "ws://ws://")):        # dirección pegada sobre un prefijo ya escrito
         url = url.split("//", 1)[1]
-    if not token:
-        raise ClientError(f"Falta el token en {config_path or 'config.json'}.\n\n"
-                          f"Agrega:\n{{\"token\": \"…\", \"server\": \"{url}\"}}")
+    if str(cfg.get("user", "")).strip():
+        # shortcut: la clave queda en texto en config.json (carpeta del usuario); cifrarla con DPAPI si se comparte el PC
+        auth = {"user": str(cfg["user"]).strip(), "password": str(cfg.get("password", ""))}
+    elif str(cfg.get("token", "")).strip():
+        auth = str(cfg["token"]).strip()                                 # instalaciones anteriores
+    else:
+        raise ClientError(f"Falta tu usuario y clave en {config_path or 'config.json'}.\n\n"
+                          f"Agrega:\n{{\"user\": \"…\", \"password\": \"…\", \"server\": \"{url}\"}}")
     host = urlsplit(url).hostname or ""
     if url.startswith("ws://") and host not in ("127.0.0.1", "localhost", "::1"):
-        raise ClientError(f"El servidor {url} no va cifrado: el token viajaría a la vista.\n\n"
+        raise ClientError(f"El servidor {url} no va cifrado: tu clave viajaría a la vista.\n\n"
                           f"Usa la dirección que empieza por wss:// en {config_path or 'config.json'}.")
     icon_path = os.path.join(app_dir(), "traductor.ico")
 
@@ -80,7 +84,7 @@ def build(cfg: dict, app: QApplication, no_tunnel: bool = False, capture_factory
     player = player or PyAudioPlayer()
 
     session = RemoteSession(
-        url, token, capture.audio_queue,
+        url, auth, capture.audio_queue,
         settings={"target": overlay.target_lang, "tone": str(cfg.get("tone", "gamer")),
                   "dub": bool(cfg.get("dub", False)), "dub_gender": str(cfg.get("dub_gender", "female")),
                   "dub_gate": True},

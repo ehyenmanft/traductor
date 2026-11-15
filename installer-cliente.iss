@@ -1,5 +1,5 @@
 ; Instalador del CLIENTE (para repartir): sin Python, sin modelos y sin claves de API.
-; Pide la dirección del servidor (wss://…) y el token personal y escribe config.json.
+; Pide la dirección del servidor (wss://…), el usuario y la clave y escribe config.json.
 ; Compilar con Inno Setup 6 después de build_client.bat:   iscc installer-cliente.iss
 ; (GitHub Actions lo compila solo: Artifacts → TraductorCliente-Setup)
 
@@ -59,10 +59,11 @@ begin
   ConnPage := CreateInputQueryPage(wpSelectDir,
     'Conexión con el servidor',
     'Datos que te dio quien administra el servidor',
-    'Pega la dirección (empieza por wss://) y tu token personal. ' +
+    'Pega la dirección (empieza por wss://) y escribe tu usuario y tu clave. ' +
     'Si ya lo tenías instalado, déjalos vacíos para conservar los actuales.');
   ConnPage.Add('Servidor:', False);
-  ConnPage.Add('Token:', True);
+  ConnPage.Add('Usuario:', False);
+  ConnPage.Add('Clave:', True);
 end;
 
 { quien pega la dirección completa sobre un "wss://" ya escrito deja "wss://wss://…" }
@@ -75,18 +76,22 @@ end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
-  Server, Token: String;
+  Server, User, Pass: String;
 begin
   Result := True;
   if CurPageID <> ConnPage.ID then Exit;
   Server := CleanServer(ConnPage.Values[0]);
-  Token := Trim(ConnPage.Values[1]);
-  if (Server = '') and (Token = '') and FileExists(ConfigPath) then Exit;
+  User := Trim(ConnPage.Values[1]);
+  Pass := ConnPage.Values[2];
+  if (Server = '') and (User = '') and (Pass = '') and FileExists(ConfigPath) then Exit;
   if (Pos('wss://', Lowercase(Server)) <> 1) or (Length(Server) < 10) then begin
     MsgBox('La dirección del servidor debe empezar por wss://', mbError, MB_OK);
     Result := False;
-  end else if Length(Token) < 16 then begin
-    MsgBox('El token parece incompleto: cópialo entero.', mbError, MB_OK);
+  end else if User = '' then begin
+    MsgBox('Escribe tu usuario.', mbError, MB_OK);
+    Result := False;
+  end else if Length(Pass) < 8 then begin
+    MsgBox('La clave tiene al menos 8 caracteres: revísala.', mbError, MB_OK);
     Result := False;
   end;
 end;
@@ -100,16 +105,18 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  Server, Token: String;
+  Server, User, Pass: String;
 begin
   if CurStep <> ssPostInstall then Exit;
   Server := CleanServer(ConnPage.Values[0]);
-  Token := Trim(ConnPage.Values[1]);
-  if Token = '' then Exit;                       { actualización: se conserva el config.json actual }
+  User := Trim(ConnPage.Values[1]);
+  Pass := ConnPage.Values[2];
+  if User = '' then Exit;                        { actualización: se conserva el config.json actual }
   SaveStringToFile(ConfigPath,
     '{' + #13#10 +
     '  "server": "' + JsonEscape(Server) + '",' + #13#10 +
-    '  "token": "' + JsonEscape(Token) + '",' + #13#10 +
+    '  "user": "' + JsonEscape(User) + '",' + #13#10 +
+    '  "password": "' + JsonEscape(Pass) + '",' + #13#10 +
     '  "tone": "gamer",' + #13#10 +
     '  "dub": false' + #13#10 +
     '}' + #13#10, False);

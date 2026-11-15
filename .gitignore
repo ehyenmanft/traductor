@@ -46,3 +46,13 @@ live_config.json.tmp
 usage.json
 usage.json.tmp
 .venv-live/
+
+# Android: compilación local
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.keystore
+
+# Distro para repartir: el APK y el instalador sí van al repositorio; el .zip que los junta, no
+dist-movil/*.zip

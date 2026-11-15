@@ -138,7 +138,7 @@ class ClientApp(unittest.TestCase):
     def test_missing_token_is_a_clear_error(self):
         with self.assertRaises(client_main.ClientError) as cm:
             client_main.build({"server": "ws://x"}, _APP, capture_factory=FakeCapture, player=FakePlayer(), config_path="C:\\x\\config.json")
-        self.assertIn("Falta el token", str(cm.exception)); self.assertIn("config.json", str(cm.exception))
+        self.assertIn("Falta tu usuario y clave", str(cm.exception)); self.assertIn("config.json", str(cm.exception))
 
     def test_public_server_must_use_wss(self):
         with self.assertRaises(client_main.ClientError) as cm:

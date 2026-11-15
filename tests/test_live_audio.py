@@ -167,8 +167,8 @@ class Deepgram(unittest.TestCase):
         while not q.empty():
             seg = q.get()
             if seg.is_final: finals.append(seg.text)
-        self.assertGreaterEqual(len(finals), 1)                          # no espera a una pausa que no llega
-        self.assertTrue(all(len(f) < 460 for f in finals))
+        self.assertGreaterEqual(len(finals), 2)                          # no espera a una pausa que no llega
+        self.assertTrue(all(len(f) < 230 for f in finals))               # frases cortas: traducción a tiempo
         t.handle_message({"type": "Results", "is_final": False, "channel": {"alternatives": [{"transcript": "and one last thing", "words": []}]}})
         t._flush_final(True)                                             # corte de conexión: lo visto no se pierde
         tail = []
