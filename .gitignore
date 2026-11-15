@@ -54,5 +54,5 @@ android/app/build/
 android/local.properties
 *.keystore
 
-# APK para repartir (se entrega aparte, no va al repositorio)
-dist-movil/
+# Distro para repartir: el APK y el instalador sí van al repositorio; el .zip que los junta, no
+dist-movil/*.zip
